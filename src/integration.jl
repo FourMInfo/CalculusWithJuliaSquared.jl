@@ -1,5 +1,7 @@
 ## integration.jl
 
+import QuadGK: quadgk
+
 
 """
     riemann(f, a, b, n; method="right"

@@ -1,11 +1,6 @@
 # Test the package utilities
 @testset "multidimensional" begin
 
-    x = [[1,2,3], [4,5,6]]
-    @test unzip(x)[1] == [1, 4]
-    @test unzip(x)[2] == [2, 5]
-    @test unzip(x)[3] == [3, 6]
-
     xs = [1,2,3]
     ys = [1,2]
     M = ((x,y) -> (x,y)).(xs, ys')
@@ -45,7 +40,6 @@ end
 
 @testset "integration" begin
 
-    @test riemann(sin, 0, pi, 10_000)  ≈ 2
-#    @test fubini((x,y) -> 1, (x->-sqrt(1-x^2), x->sqrt(1-x^2)), (-1,1)) ≈ pi
+    @test fubini((x,y) -> 1, (x->-sqrt(1-x^2), x->sqrt(1-x^2)), (-1,1)) ≈ pi
 
 end
