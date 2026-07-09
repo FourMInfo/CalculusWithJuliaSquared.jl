@@ -22,15 +22,13 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          # - '1.6' # lowest supported version; though possibly with errors
-          - '1.10' # LTS support
           - '1'   # last released version
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-        arch:
-          - x64
+        include:
+          # personal-use fork: macOS only, covering both Intel and Apple Silicon
+          - os: macos-13       # Intel (x64)
+            arch: x64
+          - os: macos-latest   # Apple Silicon (arm64)
+            arch: aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
