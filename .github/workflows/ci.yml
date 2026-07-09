@@ -23,11 +23,14 @@ jobs:
       matrix:
         version:
           - '1'   # last released version
-        include:
+        os:
           # personal-use fork: macOS only, covering both Intel and Apple Silicon
-          - os: macos-13       # Intel (x64)
+          - macos-13       # Intel (x64)
+          - macos-latest   # Apple Silicon (arm64)
+        include:
+          - os: macos-13
             arch: x64
-          - os: macos-latest   # Apple Silicon (arm64)
+          - os: macos-latest
             arch: aarch64
     steps:
       - uses: actions/checkout@v4
