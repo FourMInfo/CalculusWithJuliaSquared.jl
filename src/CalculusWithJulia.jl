@@ -73,17 +73,13 @@ include("integration.jl")
 include("plot-utils.jl")
 include("plots.jl")
 
-
-#include("plot-recipes.jl")
-
-
 const e = exp(1)
 export e
 
 export unzip, rangeclamp
 export lim
 export tangent, secant, D, sign_chart, SignChart
-export riemann
+export riemann, fubini
 export divergence, gradient, curl, ∇, uvec
 
 end # module

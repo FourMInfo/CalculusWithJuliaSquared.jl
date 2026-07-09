@@ -28,7 +28,15 @@ end
     @test fn(pi/4) <= f(pi/4)
 
     out = lim(x -> sin(x)/x, 0)
-    @test_broken out[end, 2]  ≈ 1 # an iterator now
+    @test out isa CalculusWithJulia.Limit
+    @test out.f(1e-6) ≈ 1 atol=1e-6
+    @test out.f(-1e-6) ≈ 1 atol=1e-6
+    for d in ("+", "-", "+-", +, -)
+        @test lim(x -> sin(x)/x, 0, d).dir == string(d)
+    end
+    str = sprint(show, out)
+    @test occursin("0.999999", str) # right- and left-hand values converge to 1
+    @test occursin("c", str)        # limit-point marker row is rendered
 
 
     out = sign_chart(x -> (x-1)*(x-2)/(x-3), 0, 4)
@@ -51,3 +59,5 @@ end
     @test uvec([2,2]) == 1/sqrt(2) * [1,1]
 
 end
+
+include("package-test.jl")
