@@ -1,24 +1,23 @@
-# CalculusWithJulia
+# CalculusWithJuliaSquared
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/jverzani/CalculusWithJulia.jl/binder?labpath=blank-notebook.ipynb) Run on binder.org.
+[![CI](https://github.com/FourMInfo/CalculusWithJuliaSquared.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/FourMInfo/CalculusWithJuliaSquared.jl/actions/workflows/ci.yml)
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://jverzani.github.io/CalculusWithJulia.jl/dev/)
-[![Build Status](https://travis-ci.com/jverzani/CalculusWithJulia.jl.svg?branch=master)](https://travis-ci.com/jverzani/CalculusWithJulia.jl)
+A personal, pure-Julia fork of [CalculusWithJulia.jl](https://github.com/jverzani/CalculusWithJulia.jl) — a `Julia` package providing conveniences for using `Julia` to address typical problems from the undergraduate calculus sequence.
 
-`Julia` package to provide notes and features for using `Julia` to address typical problems from the undergraduate calculus sequence.
+This fork exists to remove all Python dependencies (SymPy) from the package itself, in favor of `Symbolics.jl`, for personal study use. It is not registered in Julia's General registry and is not intended as a PR back upstream.
 
+The accompanying notes ("Calculus with Julia") this package supports may be read at [calculuswithjulia.github.io](https://calculuswithjulia.github.io) — those notes and their source live in the separate, unmodified [CalculusWithJuliaNotes.jl](https://github.com/jverzani/CalculusWithJuliaNotes.jl/) repository.
 
-The notes may be read at [calculuswithjulia.github.io](calculuswithjulia.github.io). Any suggested edits for the notes should be in a pull request to the repository [https://github.com/jverzani/CalculusWithJuliaNotes.jl/](https://github.com/jverzani/CalculusWithJuliaNotes.jl/).
+## Installing
 
-The notes expect that this package is installed, as it also provides a handful of conveniences for the task.
+Not registered — install directly from this repo:
 
-In addition to the html pages, there are other versions of the same material that can be generated, such as `ipynb` notebooks or `pdf` files. See the `runtests.jl` file for details.
-
-The notes may be read at [calculuswithjulia.github.io](https://calculuswithjulia.github.io).
-
+```julia
+] add https://github.com/FourMInfo/CalculusWithJuliaSquared.jl#master
+# or, for local editable development:
+] dev /path/to/local/clone/of/CalculusWithJuliaSquared.jl
+```
 
 ## Contributing
 
-This is a work in progress. To report an issue, make a comment, or suggest something new, please file an [issue](https://github.com/jverzani/CalculusWithJulia.jl/issues/). In your message add the tag `@jverzani` to ensure it is not overlooked. Otherwise, an email to `verzani` at `math.csi.cuny.edu` will also work.
-
-The accompanying notes have their own edit feature.
+This is a personal fork for individual study use, not an actively maintained public package. For the original, actively-maintained package, see [jverzani/CalculusWithJulia.jl](https://github.com/jverzani/CalculusWithJulia.jl).

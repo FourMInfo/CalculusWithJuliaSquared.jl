@@ -1,4 +1,4 @@
-The CalculusWithJulia.jl package is licensed under the MIT "Expat" License:
+The CalculusWithJuliaSquared.jl package (a fork of CalculusWithJulia.jl) is licensed under the MIT "Expat" License:
 
 > Copyright (c) 2019: John Verzani
 >

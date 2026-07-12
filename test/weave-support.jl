@@ -63,8 +63,8 @@ function weave_file(folder, file; build_list=(:html,), force=false, kwargs...)
         build_file(file, outfile, force=force) || return nothing
 
 
-        header = CalculusWithJulia.WeaveSupport.header_cmd
-        footer = CalculusWithJulia.WeaveSupport.footer_cmd(bnm, folder)
+        header = CalculusWithJuliaSquared.WeaveSupport.header_cmd
+        footer = CalculusWithJuliaSquared.WeaveSupport.footer_cmd(bnm, folder)
         html_content = md2html(file,
                                header_cmds=(header,),
                                footer_cmds=(footer,)
@@ -249,7 +249,7 @@ Run `weave` on all source files.
 * `force`: by default, only run `weave` on files with `html` file older than the source file in `CwJ`
 * `build_list`: list of output types to be built. The default is all types
 
-The files will be built as subdirectories in the package directory. This is returned by `pathof(CalculusWithJulia)`.
+The files will be built as subdirectories in the package directory. This is returned by `pathof(CalculusWithJuliaSquared)`.
 
 """
 function weave_all(;force=false, build_list=(:script,:html,:pdf,:github,:notebook))
