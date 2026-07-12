@@ -1,4 +1,4 @@
-using CalculusWithJulia
+using CalculusWithJuliaSquared
 using Test
 
 
@@ -28,7 +28,7 @@ end
     @test fn(pi/4) <= f(pi/4)
 
     out = lim(x -> sin(x)/x, 0)
-    @test out isa CalculusWithJulia.Limit
+    @test out isa CalculusWithJuliaSquared.Limit
     @test out.f(1e-6) ≈ 1 atol=1e-6
     @test out.f(-1e-6) ≈ 1 atol=1e-6
     for d in ("+", "-", "+-", +, -)

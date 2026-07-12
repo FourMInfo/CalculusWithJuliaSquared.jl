@@ -1,10 +1,10 @@
 using Documenter
-using CalculusWithJulia
+using CalculusWithJuliaSquared
 
 makedocs(
-    sitename="Calculus with Julia",
+    sitename="CalculusWithJuliaSquared",
     format = Documenter.HTML(),
-    modules = [CalculusWithJulia],
+    modules = [CalculusWithJuliaSquared],
     warnonly = Documenter.except(:autodocs_block)
 )
 
@@ -14,5 +14,5 @@ makedocs(
 # for more information.
 
 deploydocs(
-    repo = "github.com/jverzani/CalculusWithJulia.jl.git"
+    repo = "github.com/FourMInfo/CalculusWithJuliaSquared.jl.git"
 )

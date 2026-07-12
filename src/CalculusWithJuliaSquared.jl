@@ -1,7 +1,7 @@
 """
-    CalculusWithJulia
+    CalculusWithJuliaSquared
 
-A package to accompany notes at [https://calculuswithjulia.github.io](https://calculuswithjulia.github.io) on using Julia for topics from the calculus sequence.
+A personal, pure-Julia fork of `CalculusWithJulia.jl` to accompany notes at [https://calculuswithjulia.github.io](https://calculuswithjulia.github.io) on using Julia for topics from the calculus sequence.
 
 This package does two things:
 
@@ -13,7 +13,7 @@ notation), `divergence`, `gradient`, `curl`, and `∇`, along with some plotting
 functions. The constant `e` is assigned to `exp(1)`.
 
 
-## Packages loaded by `CalculusWithJulia`
+## Packages loaded by `CalculusWithJuliaSquared`
 
 * The `SpecialFunctions` is loaded giving access to a few special functions used in these notes, e.g., `airyai`, `gamma`
 
@@ -50,7 +50,7 @@ The `plot_implicit` function can plot `2D` implicit plots. (It is borrowed from 
 * `QuadGK` and `HCubature` are used for numeric integration
 
 """
-module CalculusWithJulia
+module CalculusWithJuliaSquared
 
 using Printf
 import Contour

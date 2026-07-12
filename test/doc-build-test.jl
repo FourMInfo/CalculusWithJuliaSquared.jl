@@ -1,6 +1,6 @@
 # test the doc-build
 
-using CalculusWithJulia
+using CalculusWithJuliaSquared
 using Pluto
 
-CalculusWithJulia.WeaveSupport.weave_all(; build_list=(:html,), force=false)
+CalculusWithJuliaSquared.WeaveSupport.weave_all(; build_list=(:html,), force=false)

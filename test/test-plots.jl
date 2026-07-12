@@ -1,4 +1,4 @@
-using CalculusWithJulia
+using CalculusWithJuliaSquared
 using Plots
 @testset "plot-utils" begin
 

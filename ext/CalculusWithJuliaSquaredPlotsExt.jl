@@ -1,8 +1,8 @@
-module CalculusWithJuliaPlotsExt
+module CalculusWithJuliaSquaredPlotsExt
 
-using CalculusWithJulia
-import CalculusWithJulia: ClosedInterval
-import CalculusWithJulia:
+using CalculusWithJuliaSquared
+import CalculusWithJuliaSquared: ClosedInterval
+import CalculusWithJuliaSquared:
     plotif, trimplot, signchart,
     plot_polar, plot_polar!,
     plot_parametric, plot_parametric!,
@@ -97,7 +97,7 @@ function signchart(f, a, b)
     p
 end
 
-adapted_grid = CalculusWithJulia.PlotUtils.adapted_grid
+adapted_grid = CalculusWithJuliaSquared.PlotUtils.adapted_grid
 function xyzs(ab::ClosedInterval, r)
     a, b = abs = extrema(ab)
     xs = sort(union([adapted_grid(t -> r(t)[i], abs)[1] for i in eachindex(r(a))]...))

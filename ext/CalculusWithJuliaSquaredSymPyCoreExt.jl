@@ -1,6 +1,6 @@
-module CalculusWithJuliaSymPyCoreExt
+module CalculusWithJuliaSquaredSymPyCoreExt
 
-import CalculusWithJulia: gradient, divergence, curl
+import CalculusWithJuliaSquared: gradient, divergence, curl
 import SymPyCore: Sym, free_symbols
 
 gradient(ex::Sym, vars::AbstractArray=free_symbols(ex)) =
