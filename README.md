@@ -4,7 +4,7 @@
 
 A personal, pure-Julia fork of [CalculusWithJulia.jl](https://github.com/jverzani/CalculusWithJulia.jl) — a `Julia` package providing conveniences for using `Julia` to address typical problems from the undergraduate calculus sequence.
 
-This fork removes all Python dependencies (SymPy) from the package itself, in favor of `Symbolics.jl` (a pure-Julia symbolic math system), for personal study use. It is not registered in Julia's General registry and is not intended as a PR back upstream.
+This fork removes all Python dependencies (SymPy) from the package itself, in favor of `Symbolics.jl` (a pure-Julia symbolic math system), for personal study use. It is not registered in Julia's General registry and is not intended as a PR back upstream. See [FORK_NOTES.md](FORK_NOTES.md) for the full story of what changed and why.
 
 The accompanying notes ("Calculus with Julia") this package supports may be read at [calculuswithjulia.github.io](https://calculuswithjulia.github.io) — those notes and their source live in the separate, unmodified [CalculusWithJuliaNotes.jl](https://github.com/jverzani/CalculusWithJuliaNotes.jl/) repository.
 
