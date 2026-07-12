@@ -84,7 +84,7 @@ end
 ## -----------------------------------
 
 
-## The gradient in SymPy.
+## The numeric gradient; the symbolic gradient is defined in the Symbolics extension.
 import ForwardDiff: gradient
 
 gradient(f::Function) = (x, xs...) -> ForwardDiff.gradient(f, vcat(x, xs...))

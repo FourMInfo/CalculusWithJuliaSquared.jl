@@ -61,3 +61,4 @@ end
 end
 
 include("package-test.jl")
+include("test-symbolics.jl")
