@@ -28,7 +28,7 @@ functions. The constant `e` is assigned to `exp(1)`.
 
 Either through extensions or through the `Julia` package `Requires` there is  additional code to be run when the following packages load:
 
-* `SymPy`: for symbolic math.
+* `Symbolics`: for symbolic math (pure Julia, no Python dependency).
 
 * `Plots`: the `Plots` package provides a plotting interface.
 
@@ -45,7 +45,7 @@ The `plot_implicit` function can plot `2D` implicit plots. (It is borrowed from 
 
 * `Roots` is used to find zeros of univariate functions
 
-* `SymPy` for symbolic math
+* `Symbolics` for symbolic math
 
 * `QuadGK` and `HCubature` are used for numeric integration
 
