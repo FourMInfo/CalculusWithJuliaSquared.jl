@@ -24,14 +24,10 @@ jobs:
         version:
           - '1'   # last released version
         os:
-          # personal-use fork: macOS only, covering both Intel and Apple Silicon
-          - macos-13       # Intel (x64)
+          # personal-use fork: only ever installed locally on Apple Silicon
           - macos-latest   # Apple Silicon (arm64)
-        include:
-          - os: macos-13
-            arch: x64
-          - os: macos-latest
-            arch: aarch64
+        arch:
+          - aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
