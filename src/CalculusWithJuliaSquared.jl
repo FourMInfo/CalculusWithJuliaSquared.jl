@@ -24,11 +24,11 @@ functions. The constant `e` is assigned to `exp(1)`.
 
 * The `PlotUtils` package is loaded so that its `adapted_grid` function is available.
 
+* The `Symbolics` package is loaded (and reexported) giving access to symbolic math (`@variables`, etc.) along with symbolic `gradient`, `divergence`, and `curl` methods -- pure Julia, no Python dependency.
+
 ## Packages with extra features added when loaded
 
-Either through extensions or through the `Julia` package `Requires` there is  additional code to be run when the following packages load:
-
-* `Symbolics`: for symbolic math (pure Julia, no Python dependency).
+Through a package extension, additional code runs when the following package loads:
 
 * `Plots`: the `Plots` package provides a plotting interface.
 
@@ -44,8 +44,6 @@ The `plot_implicit` function can plot `2D` implicit plots. (It is borrowed from 
 ## Other packages with a recurring role in the accompanying notes:
 
 * `Roots` is used to find zeros of univariate functions
-
-* `Symbolics` for symbolic math
 
 * `QuadGK` and `HCubature` are used for numeric integration
 
@@ -63,6 +61,7 @@ using Reexport
 @reexport using LinearAlgebra
 @reexport using SpecialFunctions
 @reexport using IntervalSets
+@reexport using Symbolics
 
 import SplitApplyCombine
 
@@ -72,6 +71,7 @@ include("derivatives.jl")
 include("integration.jl")
 include("plot-utils.jl")
 include("plots.jl")
+include("symbolics.jl")
 
 const e = exp(1)
 export e

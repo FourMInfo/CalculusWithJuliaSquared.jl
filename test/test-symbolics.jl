@@ -1,6 +1,15 @@
 using CalculusWithJuliaSquared
-using Symbolics
 using Test
+
+@testset "Symbolics reexport" begin
+
+    # `Symbolics` is a hard, reexported dependency -- `using CalculusWithJuliaSquared`
+    # alone should expose both its exported macros/functions (e.g. `@variables`)
+    # and, via Reexport.jl, the qualified `Symbolics.foo` form.
+    @variables t
+    @test isequal(Symbolics.derivative(t^2, t), 2t)
+
+end
 
 @testset "Symbolics extension" begin
 

@@ -1,7 +1,7 @@
 module CalculusWithJuliaSquaredPlotsExt
 
 using CalculusWithJuliaSquared
-import CalculusWithJuliaSquared: ClosedInterval
+import CalculusWithJuliaSquared: ClosedInterval, rangeclamp
 import CalculusWithJuliaSquared:
     plotif, trimplot, signchart,
     plot_polar, plot_polar!,
@@ -32,19 +32,8 @@ end
 
 # -----
 
-# use rangeclamp
 function trimplot(f, a, b, c=20; color=:black, legend=false, kwargs...)
-    F = (a,b) -> begin
-        fa, fb = f(a), f(b)
-        M = max(fa, fb)
-        m = min(fa, fb)
-        m < -c && return false
-        M > c && return false
-        true
-    end
-    xs = range(a, b, length=251)
-    cols = find_colors(F, xs, (color, :transparent, :red))
-    plot(xs, f.(xs), colors=cols, legend=legend, kwargs...)
+    plot(rangeclamp(f, c), a, b; color=color, legend=legend, kwargs...)
 end
 
 function plotif(f, g, a::Real, b::Real;
