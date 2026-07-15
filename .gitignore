@@ -22,3 +22,4 @@ script/*
 .travis.yml
 appveyor.yml
 pluto/
+/_research

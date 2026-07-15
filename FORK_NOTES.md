@@ -62,7 +62,7 @@ With the dependency swap done, the remaining work was closing test-coverage gaps
 
 ## What didn't change
 
-The book content (`CalculusWithJuliaNotes.jl`) — deliberately untouched, used as-is. Reading through it, it's genuinely SymPy-heavy: roughly 76 of its 96 lesson files reference SymPy, concentrated in the derivatives and integrals chapters, and used for live computation (Taylor series, substitution, symbolic solving), not just display. Porting *that* to Symbolics would be a real, multi-week undertaking of its own — rewriting worked examples, not just swapping imports — and isn't something this fork is attempting.
+The book content (`CalculusWithJuliaNotes.jl`) — deliberately untouched, used as-is. Reading through it, it's genuinely SymPy-heavy: roughly 76 of its 96 lesson files reference SymPy, concentrated in the derivatives and integrals chapters, and used for live computation (Taylor series, substitution, symbolic solving), not just display. Porting *that* to Symbolics would be a real, multi-week undertaking of its own — rewriting worked examples, not just swapping imports — and isn't something this fork is attempting, at least not yet. A detailed scoping analysis of what it would involve is kept as a local planning document, in case it's ever picked up.
 
 ## Status
 
