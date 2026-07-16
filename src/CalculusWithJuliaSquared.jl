@@ -26,11 +26,7 @@ functions. The constant `e` is assigned to `exp(1)`.
 
 * The `Symbolics` package is loaded (and reexported) giving access to symbolic math (`@variables`, etc.) along with symbolic `gradient`, `divergence`, and `curl` methods -- pure Julia, no Python dependency.
 
-## Packages with extra features added when loaded
-
-Through a package extension, additional code runs when the following package loads:
-
-* `Plots`: the `Plots` package provides a plotting interface.
+* The `Plots` package is loaded (and reexported) providing the plotting interface directly -- no separate `using Plots` needed.
 
 Several plot recipes are provided to ease the creation of plots in the notes.
 `plotif`, `trimplot`, and `signchart` are used for plotting univariate functions;
@@ -62,6 +58,16 @@ using Reexport
 @reexport using SpecialFunctions
 @reexport using IntervalSets
 @reexport using Symbolics
+@reexport using Plots
+
+# auto-configure plotting for headless CI vs interactive use
+# (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
+if haskey(ENV, "CI") || get(ENV, "GKSwstype", "") == "100"
+    ENV["GKSwstype"] = "100"  # Force GKS headless mode
+    gr(show=false)             # Disable plot display
+else
+    gr()                       # Interactive mode
+end
 
 import SplitApplyCombine
 
