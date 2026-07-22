@@ -51,6 +51,7 @@ import Contour
 import PlotUtils
 import ForwardDiff
 export ForwardDiff
+import Latexify
 
 using Reexport
 @reexport using Roots
@@ -78,6 +79,16 @@ include("integration.jl")
 include("plot-utils.jl")
 include("plots.jl")
 include("symbolics.jl")
+
+# Typeset symbolic expressions as display math in HTML/LaTeX frontends (Quarto, Jupyter,
+# Documenter), parallel to SymPy's built-in text/latex show. Latexify's default text/latex
+# wraps in $$\begin{equation}...\end{equation}$$ which Quarto renders literally, so emit
+# clean \[ ... \] via both MIMEs. (No effect in the plain-text REPL.)
+Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
+    print(io, "\\[ ", Latexify.latexify(x; env=:raw), " \\]")
+Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
+    print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
+          Latexify.latexify(x; env=:raw), " \\]</span>")
 
 const e = exp(1)
 export e
