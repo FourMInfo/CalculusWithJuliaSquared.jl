@@ -60,13 +60,24 @@ With the dependency swap done, the remaining work was closing test-coverage gaps
 
 **`Symbolics` promoted from a weak dependency to a hard, `@reexport`-ed one.** Through Phase B, `Symbolics` only loaded if a user separately did `using Symbolics` themselves — the same opt-in pattern the old `SymPyCore` extension used. But this fork's whole premise is that symbolic math *with Julia* is the default way of working here, not an optional extra, so that asymmetry didn't sit right. Now `using CalculusWithJuliaSquared` alone exposes `@variables` and the rest of Symbolics' interface directly — confirmed empirically that `Reexport.jl` re-exports the module name itself, not just its individual exported functions, so both the bare `@variables x` form and the qualified `Symbolics.gradient(...)` form work without a second import. Checked first that this couldn't silently break anything: none of `gradient`, `jacobian`, or `derivative` are actually exported by Symbolics, so there was no risk of colliding with this package's own same-named functions. The tradeoff accepted is real, though: Symbolics' roughly 40-second precompile is now paid every time, not just when opted into.
 
+## Symbolics isn't just Python-free — it's often the better tool
+
+The fork's premise was subtractive: remove Python, and accept whatever that costs. In practice, using Symbolics.jl in earnest — here, and while porting the notes' worked examples off SymPy — it keeps turning out to be an *improvement*, not a compromise. What surfaced:
+
+- **Cleaner numerics.** Comparing a symbolic derivative's value against an automatic-differentiation one, Symbolics returns a clean `0.0` where SymPy reported `-5.55e-17` — no floating-point epsilon noise to explain away.
+- **Fuller numeric evaluation.** Evaluating a derivative at `x = π`, Symbolics carries `exp(-π)` all the way to a number, giving a real three-way comparison (symbolic vs automatic vs finite-difference); SymPy left the bare symbol `exp(-π)`, which reads worse beside the two floats next to it.
+- **More readable simplification.** The forms Symbolics returns tend to stop at a more legible place — closer to what you'd write by hand than SymPy's.
+- **Better-typeset display.** With a small helper this fork added (v0.5.1: `Latexify`-based `text/latex`/`text/html` show methods — the Symbolics parallel to SymPy's built-in one), expressions render as clean, appropriately-sized display math, versus SymPy's cramped, near-unreadable tiny font in the same HTML/notebook.
+
+None of this is just "newer wins." Symbolics is a from-scratch, native-Julia computer-algebra system built with the benefit of SymPy's decades of hindsight — and it shows in exactly these small, well-considered defaults. The goal was "pure Julia"; what it turned out to be is *pure Julia and nicer to use*.
+
 ## What didn't change
 
-The book content (`CalculusWithJuliaNotes.jl`) — deliberately untouched, used as-is. Reading through it, it's genuinely SymPy-heavy: roughly 76 of its 96 lesson files reference SymPy, concentrated in the derivatives and integrals chapters, and used for live computation (Taylor series, substitution, symbolic solving), not just display. Porting *that* to Symbolics would be a real, multi-week undertaking of its own — rewriting worked examples, not just swapping imports — and isn't something this fork is attempting, at least not yet. A detailed scoping analysis of what it would involve is kept as a local planning document, in case it's ever picked up.
+The book content (`CalculusWithJuliaNotes.jl`) — deliberately untouched, used as-is. Reading through it, it's genuinely SymPy-heavy: roughly 76 of its 96 lesson files reference SymPy, concentrated in the derivatives and integrals chapters, and used for live computation (Taylor series, substitution, symbolic solving), not just display. Porting *that* to Symbolics is a real, multi-week undertaking of its own — rewriting worked examples, not just swapping imports. That work has since begun — not in this package, but in a companion fork of the notes themselves, [CalculusWithJuliaSquaredNotes.jl](https://github.com/FourMInfo/CalculusWithJuliaSquaredNotes.jl), ported chapter by chapter as study reaches them, with this package serving as the pure-Julia engine underneath. The detailed scoping and per-chapter plan live as local planning documents.
 
 ## Status
 
-The roadmap that motivated this fork is complete: zero Python dependencies remain, and the test-coverage gaps identified along the way have been closed. No further phases are currently planned — anything beyond this would be a fresh piece of work, not a continuation of a known punch list.
+The roadmap that *motivated* this fork is complete: zero Python dependencies remain, and the test-coverage gaps found along the way are closed. But this was never going to be a frozen, finished package — it's a personal study tool, and it keeps growing as needs surface: missing functionality the studies call for, and improvements like the v0.5.1 display helper above, added as they come up rather than against a fixed punch list. The companion notes port (above) is the current driver of that, and is already feeding refinements back here. Expect it to keep evolving.
 
 ## Summary
 
