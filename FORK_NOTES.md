@@ -77,7 +77,7 @@ The book content (`CalculusWithJuliaNotes.jl`) — deliberately untouched, used 
 
 ## Status
 
-The roadmap that *motivated* this fork is complete: zero Python dependencies remain, and the test-coverage gaps found along the way are closed. But this was never going to be a frozen, finished package — it's a personal study tool, and it keeps growing as needs surface: missing functionality the studies call for, and improvements like the v0.5.1 display helper above, added as they come up rather than against a fixed punch list. The companion notes port (above) is the current driver of that, and is already feeding refinements back here. Expect it to keep evolving.
+The roadmap that *motivated* this fork is complete: zero Python dependencies remain, and the test-coverage gaps found along the way are closed. But this was never going to be a frozen, finished package — it's a personal study tool, and it keeps growing as needs surface: missing functionality the studies call for, and improvements like the v0.5.1 display helper above, added as they come up rather than against a fixed punch list. v0.5.2 came the same way — the notes port exposed that this package's headless-plotting guard sat at module top level, so it ran during *precompilation*, where its `ENV["GKSwstype"]` write is discarded before the loading process ever sees it. It had never fired on a real load. Moved into `__init__` and widened with `!isinteractive()`, so document renders (which set neither `CI` nor `GKSwstype`) stop resolving GR to an on-screen workstation. The companion notes port (above) is the current driver of that, and is already feeding refinements back here. Expect it to keep evolving.
 
 ## Summary
 
