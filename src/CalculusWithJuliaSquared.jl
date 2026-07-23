@@ -61,15 +61,6 @@ using Reexport
 @reexport using Symbolics
 @reexport using Plots
 
-# auto-configure plotting for headless CI vs interactive use
-# (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
-if haskey(ENV, "CI") || get(ENV, "GKSwstype", "") == "100"
-    ENV["GKSwstype"] = "100"  # Force GKS headless mode
-    gr(show=false)             # Disable plot display
-else
-    gr()                       # Interactive mode
-end
-
 import SplitApplyCombine
 
 include("multidimensional.jl")
@@ -89,6 +80,24 @@ Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
 Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
     print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
           Latexify.latexify(x; env=:raw), " \\]</span>")
+
+# auto-configure plotting for headless vs interactive use
+# (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
+#
+# MUST live in `__init__` — at module top level this runs during *precompilation*, where the
+# `ENV` write is discarded and never reaches the loading process, so the guard silently does
+# nothing. `!isinteractive()` is what catches document renders: a Quarto/Documenter build runs
+# Julia as a non-interactive worker and sets neither `CI` nor `GKSwstype`, so without it GR
+# resolves to an on-screen GKS workstation and figures open outside the page instead of being
+# embedded. The REPL and IJulia both report `isinteractive() == true`, so they stay interactive.
+function __init__()
+    if haskey(ENV, "CI") || get(ENV, "GKSwstype", "") == "100" || !isinteractive()
+        ENV["GKSwstype"] = "100"  # Force GKS headless mode
+        gr(show=false)             # Disable plot display
+    else
+        gr()                       # Interactive mode
+    end
+end
 
 const e = exp(1)
 export e
