@@ -19,7 +19,7 @@ This package must have **zero Python anywhere in its dependency tree** — that 
 
 ## Workflow
 
-Follow the `phased-implementation-workflow` skill: branch per phase, PR when done, wait for CI + explicit approval, **squash-merge** (`gh pr merge --squash --delete-branch`). Small, explicitly-approved docs-only edits may go directly to `master`. The `knowledge-capture-conventions` skill governs where learnings go; plan documents live in the gitignored `_research/` folder (local-only, never commit).
+Follow the `phased-implementation-workflow` skill: branch per phase, PR when done, wait for CI + explicit approval, **squash-merge** (`gh pr merge --squash --delete-branch`). Small, explicitly-approved docs-only edits may go directly to `main`. The `knowledge-capture-conventions` skill governs where learnings go; plan documents live in the gitignored `_research/` folder (local-only, never commit).
 
 ## Versioning & Registry Stance
 

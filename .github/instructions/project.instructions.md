@@ -19,13 +19,13 @@ A **standalone personal fork** — deliberately NOT part of the Math & Tech Stud
 **Identity**: package UUID is `f826098b-d57e-4440-b91e-2a05d35c24ae` — deliberately fresh, NOT upstream's (`a2e0e22d-…`), so both packages can coexist in one dependency graph. Consumers install by URL or dev-path since the package is unregistered:
 
 ```julia
-] add https://github.com/FourMInfo/CalculusWithJuliaSquared.jl#master
+] add https://github.com/FourMInfo/CalculusWithJuliaSquared.jl#main
 # or: ] dev /Users/aron/Code/Study/Julia/Math/CalculusWithJuliaSquared.jl
 ```
 
 ## CI
 
-One workflow, one job: current stable Julia (`'1'`) on `macos-latest`/aarch64 — deliberately minimal for a personal fork used on one machine. `Documentation.yml` builds and deploys Documenter docs to this repo's own `gh-pages` on push to `master`.
+One workflow, one job: current stable Julia (`'1'`) on `macos-latest`/aarch64 — deliberately minimal for a personal fork used on one machine. `Documentation.yml` builds and deploys Documenter docs to this repo's own `gh-pages` on push to `main`.
 
 ## Critical Constraints — Do NOT Do These
 
