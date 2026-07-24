@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - master # transitional: drop once the default branch rename has settled
     tags: '*'
   pull_request:
 
