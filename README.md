@@ -13,7 +13,7 @@ The accompanying notes ("Calculus with Julia") this package supports may be read
 Not registered — install directly from this repo:
 
 ```julia
-] add https://github.com/FourMInfo/CalculusWithJuliaSquared.jl#master
+] add https://github.com/FourMInfo/CalculusWithJuliaSquared.jl#main
 # or, for local editable development:
 ] dev /path/to/local/clone/of/CalculusWithJuliaSquared.jl
 ```
