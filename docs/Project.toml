@@ -2,5 +2,8 @@
 CalculusWithJuliaSquared = "f826098b-d57e-4440-b91e-2a05d35c24ae"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 
+[sources]
+CalculusWithJuliaSquared = {path = ".."}
+
 [compat]
 Documenter = "1"
