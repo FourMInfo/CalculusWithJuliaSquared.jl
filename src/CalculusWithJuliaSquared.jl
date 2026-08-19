@@ -103,7 +103,7 @@ const e = exp(1)
 export e
 
 export unzip, rangeclamp
-export lim
+export lim, symlim, tlim
 export tangent, secant, D, sign_chart, SignChart
 export riemann, fubini
 export divergence, gradient, curl, ∇, uvec
