@@ -121,6 +121,73 @@ end
 
 end
 
+@testset "symbolic limits" begin
+
+    @variables x::Real
+
+    # -- cancellation. Every one of these is a case where SymbolicLimits alone
+    #    returns a wrong value (0, or the reciprocal) with no warning.
+    @test symlim((x^2 - 1)/(x - 1), x, 1)[1] == 2
+    @test symlim((x^2 - 4)/(x - 2), x, 2)[1] == 4
+    @test symlim((x^3 - 1)/(x - 1), x, 1)[1] == 3
+    @test symlim((x^2 - 5x + 6)/(x^2 + x - 6), x, 2)[1] == -1//5
+    @test symlim((x - 2)/(x^2 - 4), x, 2)[1] == 1//4
+    @test symlim((3x^2 - x - 10)/(x^2 - 4), x, 2)[1] == 11//4
+    @test symlim((x^2 - 1)/(x - 1), x, 1)[2] === :cancel
+
+    # -- series: the trigonometric and root limits the Gruntz engine declines
+    @test symlim(sin(x)/x, x, 0)[1] == 1
+    @test symlim((1 - cos(x))/x^2, x, 0)[1] == 1//2
+    @test symlim((1 - cos(x))/x, x, 0)[1] == 0
+    @test symlim(tan(x)/x, x, 0)[1] == 1
+    @test symlim((2sin(x) - sin(2x))/(x - sin(x)), x, 0)[1] == 6
+    @test symlim((sqrt(x + 1) - 1)/x, x, 0)[1] == 1//2
+    @test symlim((exp(x) - 1 - x)/x^2, x, 0)[1] == 1//2
+    @test symlim((x - 27)/(x^(1//3) - 3), x, 27)[1] == 27
+    @test symlim(x/(x - 1) - 1/log(x), x, 1)[1] == 1//2
+    @test symlim(sin(x)/x, x, 0)[2] === :series
+
+    # -- answers stay exact, not floating point
+    @test symlim(sin(x)/x, x, 0)[1] isa Union{Integer,Rational}
+
+    # -- divergence. SymbolicLimits returns 0 for log(x) at 0+, so this cannot be
+    #    delegated to it; the numeric increment test is what establishes it.
+    @test symlim(log(x), x, 0)[1] == -Inf
+    @test symlim(x^2 + 1 + log(11x - 15)/99, x, 15//11)[1] == -Inf
+
+    # -- at infinity, where the Gruntz engine is at home
+    @test symlim(log(x)/x, x, Inf)[1] == 0
+    @test symlim(x^7/exp(x), x, Inf)[1] == 0
+    @test symlim(log(x)/x, x, Inf)[2] === :gruntz
+
+    # -- honest refusals rather than plausible guesses.
+    #    x*sin(1/x) does have the limit 0, by the squeeze theorem; no route here
+    #    can show that, so none claims to. Symbolics folds 0*sin(1/0) to 0 by the
+    #    zero-product rule, and this guards against accepting that as an answer.
+    @test symlim(x * sin(1/x), x, 0)[1] === nothing
+    @test symlim(cos(pi*x)/(1 - (2x)^2), x, 1//2)[1] === nothing   # pi floated by taylor
+
+    # -- the stages back each other up: with cancellation switched off, the
+    #    series stage still reaches the right answer by another route
+    @test symlim((x^3 - 1)/(x - 1), x, 1; cancel = false)[1] == 3
+    @test symlim((x^3 - 1)/(x - 1), x, 1; cancel = false)[2] === :series
+
+    # -- pin the upstream defect this staging exists to route around. If this
+    #    test starts failing, SymbolicLimits has been fixed and the ordering
+    #    here can be revisited.
+    let SL = CalculusWithJuliaSquared.SymbolicLimits, uw = Symbolics.unwrap
+        @test SL.limit(uw((x^3 - 1)/(x - 1)), uw(x), 1)[1] == 0       # should be 3
+        @test SL.limit(uw(log(x)), uw(x), 0, :right)[1] == 0          # should be -Inf
+    end
+
+    # -- tlim on its own
+    @test tlim(sin(x), x, x) == 1
+    @test tlim(1 - cos(x), x^2, x) == 1//2
+    @test tlim(2sin(x) - sin(2x), x - sin(x), x) == 6
+    @test tlim(sqrt(x + 1) - 1, x, x) == 1//2
+
+end
+
 include("package-test.jl")
 include("test-symbolics.jl")
 include("test-plots.jl")
