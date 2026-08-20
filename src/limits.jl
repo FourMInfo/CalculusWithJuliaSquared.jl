@@ -163,16 +163,40 @@ const _uw = Symbolics.value
 _isnum(e)   = _uw(e) isa Number
 _symzero(e) = _isnum(e) && iszero(_uw(e))
 
-# A substituted result is usable only when it has folded to a finite number.
-function _okval(e)
-    _isnum(e) || return false
-    try isfinite(float(_uw(e))) catch; false end
+# Free symbols other than the limit variable, given arbitrary sample values, so that
+# the numeric guards below can still run on an expression carrying parameters. The
+# limit of ((x+h)^5 - x^5)/h in `h` is 5x^4 — perfectly valid, but nothing about it
+# can be evaluated to a number until `x` is pinned down.
+function _ground(ex, v)
+    vs = Symbolics.get_variables(ex)
+    d  = Dict()
+    for (i, u) in enumerate(vs)
+        isequal(u, Symbolics.unwrap(v)) && continue
+        d[u] = 1.3247179572447458 + 0.1i    # nothing special; just not 0, 1 or π
+    end
+    isempty(d) ? ex : substitute(ex, d)
+end
+
+"""
+Is a substituted result usable as a limit?
+
+A numeric result must be finite. A *symbolic* result is fine too — `5x^4` is the honest
+answer to a limit taken in `h` — provided it no longer mentions the limit variable and
+grounds to a finite value. Requiring a `Number` here was a bug: it threw away correct
+answers for every limit carrying a parameter, and sent them to the Gruntz engine instead.
+"""
+function _usable(e, v)
+    x = _uw(e)
+    x isa Number && return try isfinite(float(x)) catch; false end
+    any(isequal(Symbolics.unwrap(v)), Symbolics.get_variables(e)) && return false
+    g = _uw(_ground(e, v))
+    g isa Number ? (try isfinite(float(g)) catch; false end) : false
 end
 
 # Fold an expression to a number at a point; `nothing` if it is not defined there.
 function _numfold(ex, v, c)
     try
-        f = Symbolics.build_function(ex, v; expression = Val(false))
+        f = Symbolics.build_function(_ground(ex, v), v; expression = Val(false))
         y = f(float(c))
         (y isa Number && isfinite(float(y))) ? float(y) : nothing
     catch
@@ -204,10 +228,19 @@ end
 _coeffs(t, w, n) = Any[substitute(t, Dict(w => 0));
                        [Symbolics.coeff(t, w^k) for k in 1:n]]
 
+# Ranking series only needs to know which coefficient is the first NON-ZERO one, and
+# that question is answerable for a symbolic coefficient too: 5x^4 is not zero.
+function _coeff_iszero(c)
+    x = _uw(c)
+    x isa Number && return iszero(x)
+    # `iszero` on a symbolic term does not return a Bool, so compare structurally
+    # against zero after simplifying.
+    isequal(_uw(simplify(c)), 0)
+end
+
 function _order(cs)
     for (i, c) in pairs(cs)
-        _isnum(c) || return nothing        # symbolic coefficient: cannot rank it
-        iszero(_uw(c)) || return i - 1
+        _coeff_iszero(c) || return i - 1
     end
     nothing
 end
@@ -373,9 +406,10 @@ See also [`tlim`](@ref), [`lim`](@ref).
 """
 function symlim(ex, v, c; cancel = true, check = true, n = 8, secs = 10)
     val, route = _symlim(ex, v, c, cancel, n, secs)
-    if check && val !== nothing && c isa Number && isfinite(float(c)) && _okval(val)
+    if check && val !== nothing && c isa Number && isfinite(float(c)) && _usable(val, v)
         nr = _numprobe(ex, v, c)
-        s  = float(_uw(val))
+        gv = _uw(_ground(val, v))
+        s  = gv isa Number ? float(gv) : NaN
         if nr !== nothing && isfinite(s) && abs(s - nr) > 1e-3 * max(1, abs(nr))
             @warn "symbolic and numeric limits disagree" symbolic=s numeric=nr route
         end
@@ -393,7 +427,7 @@ function _symlim(ex, v, c, cancel, n, secs)
     #    at `c` rejects that.
     num, den = numerator(ex), denominator(ex)
     n0, d0 = sub(num), sub(den)
-    if _okval(d0) && !_symzero(d0) && _okval(n0) && _numfold(ex, v, c) !== nothing
+    if _usable(d0, v) && !_symzero(d0) && _usable(n0, v) && _numfold(ex, v, c) !== nothing
         return (simplify(n0 / d0), :substitution)
     end
 
@@ -405,7 +439,7 @@ function _symlim(ex, v, c, cancel, n, secs)
         try
             q = Symbolics.simplify_fractions(ex)
             nq, dq = sub(numerator(q)), sub(denominator(q))
-            if _okval(dq) && !_symzero(dq) && _okval(nq) && _numfold(q, v, c) !== nothing
+            if _usable(dq, v) && !_symzero(dq) && _usable(nq, v) && _numfold(q, v, c) !== nothing
                 return (simplify(nq / dq), :cancel)
             end
         catch

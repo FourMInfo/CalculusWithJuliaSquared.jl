@@ -180,6 +180,30 @@ end
         @test SL.limit(uw(log(x)), uw(x), 0, :right)[1] == 0          # should be -Inf
     end
 
+    # -- SYMBOLIC-VALUED limits: the answer carries a free parameter.
+    #    This whole class was untested when symlim first landed, and it was broken:
+    #    the gate required the substituted result to be a `Number`, so `5x^4` was
+    #    rejected and the problem fell through to the Gruntz engine, which answers 0.
+    #    Note the routes are asserted, not just the values — the log and exp cases
+    #    returned the RIGHT values by the WRONG route, so a value-only test passes
+    #    straight over the bug.
+    @variables h::Real
+
+    @test isequal(symlim(simplify(expand(((x+h)^5 - x^5)/h)), h, 0)[1], 5x^4)
+    @test isequal(symlim(((x+h)^5 - x^5)/h, h, 0)[1], 5x^4)          # raw 0/0
+    @test symlim(((x+h)^5 - x^5)/h, h, 0)[2] === :cancel
+    @test isequal(symlim(((x+h)^3 - x^3)/h, h, 0)[1], 3x^2)
+    @test isequal(symlim((1/(x+h) - 1/x)/h, h, 0)[1], -1/x^2)
+    @test isequal(symlim((log(x+h) - log(x))/h, h, 0)[1], 1/x)
+    @test symlim((log(x+h) - log(x))/h, h, 0)[2] === :series
+    @test isequal(symlim((exp(x+h) - exp(x))/h, h, 0)[1], exp(x))
+    @test symlim((exp(x+h) - exp(x))/h, h, 0)[2] === :series
+
+    # -- tlim likewise: ranking a series needs to know which coefficient is the first
+    #    NON-ZERO one, which is answerable for a symbolic coefficient too
+    @test isequal(tlim((x+h)^5 - x^5, h, h), 5x^4)
+    @test isequal(tlim(sin(x+h) - sin(x), h, h), cos(x))
+
     # -- tlim on its own
     @test tlim(sin(x), x, x) == 1
     @test tlim(1 - cos(x), x^2, x) == 1//2
