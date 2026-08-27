@@ -204,6 +204,88 @@ function _numfold(ex, v, c)
     end
 end
 
+# ----------------------------------------------------------------------------
+# One-sided numeric evidence
+#
+# Every route below can be checked against what the function actually does on
+# each side of `c`. That evidence is what distinguishes a limit from a jump, and
+# it is the only thing that catches a route returning a confident wrong number.
+# ----------------------------------------------------------------------------
+
+# Step sizes stop at 1e-6 deliberately. Finer steps are where floating point
+# starts destroying the answer — the numerator of (1 - cos(x))/x^2 underflows to
+# exactly zero below about 1e-7 — and a spurious verdict there would suppress
+# limits the series route gets exactly right.
+const _SIDE_HS = (1e-2, 1e-3, 1e-4, 1e-5, 1e-6)
+
+"""
+What the samples on ONE side of `c` say. `s` is `+1` for the right, `-1` for the left.
+
+  * `nothing` — `ex` cannot be evaluated on that side, so its domain does not
+    reach `c` from that direction. Not a failure: `log` at `0` is exactly this.
+  * `(:finite, y)` — the samples are settling on `y`.
+  * `(:diverges, ±Inf)` — the increments are not collapsing and hold one sign.
+  * `(:erratic, NaN)` — evaluable, but neither settling nor monotone. No opinion.
+
+Testing the *increments* rather than the magnitude is what catches logarithmic
+divergence, which grows by a constant per decade and never passes a fixed threshold.
+"""
+function _side(ex, v, c, s; hs = _SIDE_HS)
+    f = try
+        Symbolics.build_function(_ground(ex, v), v; expression = Val(false))
+    catch
+        return nothing
+    end
+    ys = Float64[]
+    for h in hs
+        y = try
+            r = f(float(c + s * h))
+            (r isa Number && isfinite(float(r))) ? float(r) : nothing
+        catch
+            nothing
+        end
+        y === nothing && return nothing
+        push!(ys, y)
+    end
+    d = diff(ys)
+    length(d) >= 2 || return (:erratic, NaN)
+    maximum(abs, d) < 1e-12       && return (:finite, ys[end])   # constant
+    abs(d[end]) < 0.1 * abs(d[1]) && return (:finite, ys[end])   # increments collapsing
+    # An increment small against the value itself is convergence however its sign
+    # wandered. Without this, float noise in an already-converged sequence — the
+    # last samples of (1 - cos(x))/x^2 jitter in the 5th decimal — can land every
+    # increment on one sign and read as divergence.
+    abs(d[end]) < 1e-3 * max(1, abs(ys[end])) && return (:finite, ys[end])
+    all(<(0), d) && return (:diverges, -Inf)
+    all(>(0), d) && return (:diverges,  Inf)
+    (:erratic, NaN)
+end
+
+# Do the two sides tell the same story? `nothing` and `:erratic` are "no opinion",
+# never agreement — this is true only on positive, matching evidence.
+function _agree(l, r)
+    (l === nothing || r === nothing) && return false
+    l[1] === r[1] || return false
+    # A jump is O(1); what separates the two sides of a continuous function here is
+    # only the sampling offset, O(h_min). Anything tighter than this calls
+    # (x^2-1)/(x-1) — which samples as 2+h against 2-h — a discontinuity.
+    l[1] === :finite   && return abs(l[2] - r[2]) <= 1e-3 * max(1, abs(l[2]), abs(r[2]))
+    l[1] === :diverges && return l[2] == r[2]
+    false
+end
+
+# Is a route's answer consistent with the evidence? True whenever there is nothing
+# to contradict it — a symbolic answer that will not ground to a number, an
+# `:erratic` side, no evidence at all.
+function _consistent(val, ev, v)
+    (ev === nothing || ev[1] === :erratic) && return true
+    g = _uw(_ground(val, v))
+    g isa Number || return true
+    y = try float(g) catch; return true end
+    ev[1] === :finite && return abs(y - ev[2]) <= 1e-3 * max(1, abs(ev[2]))
+    y == ev[2]
+end
+
 # Run `f()` on a worker thread, giving up after `secs`. A hung `SymbolicLimits`
 # call is CPU-bound and never yields, so a same-thread watchdog would starve —
 # this needs Julia started with `-t 2` or more to be effective.
@@ -218,9 +300,13 @@ end
 
 # Every call into SymbolicLimits goes through here — it is the only stage that
 # can fail to terminate.
-function _gruntz(ex, v, c; secs = 10)
+function _gruntz(ex, v, c; secs = 10, side = :both)
     r = _timed(secs) do
-        SymbolicLimits.limit(Symbolics.unwrap(ex), Symbolics.unwrap(v), c)[1]
+        if side === :both
+            SymbolicLimits.limit(Symbolics.unwrap(ex), Symbolics.unwrap(v), c)[1]
+        else
+            SymbolicLimits.limit(Symbolics.unwrap(ex), Symbolics.unwrap(v), c, side)[1]
+        end
     end
     r === nothing ? (nothing, :unresolved) : (r, :gruntz)
 end
@@ -236,6 +322,26 @@ function _coeff_iszero(c)
     # `iszero` on a symbolic term does not return a Bool, so compare structurally
     # against zero after simplifying.
     isequal(_uw(simplify(c)), 0)
+end
+
+# Does any power in `ex` carry an exponent that is not a fixed number? Ranking two
+# series by leading order is meaningless when an exponent is unknown: the order of
+# `x^k` is `k`, so `sin(sin(x^2))/x^k` has limit 0, 1 or ∞ depending on `k` alone.
+# Returning an answer for one of them would be a guess dressed as a computation.
+function _symbolic_exponent(ex)
+    x = _uw(ex)
+    x isa Number && return false
+    SU = Symbolics.SymbolicUtils
+    try
+        SU.iscall(x) || return false
+        as = SU.arguments(x)
+        if SU.operation(x) === (^) && length(as) == 2
+            isempty(Symbolics.get_variables(as[2])) || return true
+        end
+        return any(_symbolic_exponent, as)
+    catch
+        return false
+    end
 end
 
 function _order(cs)
@@ -285,6 +391,7 @@ circular in that way, since the limit is the goal rather than a step toward it.
 See also [`symlim`](@ref), [`lim`](@ref).
 """
 function tlim(num, den, v, c = 0; n = 6)
+    (_symbolic_exponent(num) || _symbolic_exponent(den)) && return nothing
     try
         @variables w::Real
         shift(e) = substitute(e, Dict(v => c + w))
@@ -301,30 +408,69 @@ function tlim(num, den, v, c = 0; n = 6)
     end
 end
 
-# Evidence of divergence: a convergent sequence's increments collapse toward
-# zero, a divergent one's do not. Testing the increments rather than the
-# magnitude is what catches logarithmic divergence, which grows by a constant
-# per decade and never reaches any fixed threshold.
-function _diverges(ex, v, c; hs = (1e-2, 1e-4, 1e-6, 1e-8, 1e-10))
-    for side in (1, -1)
-        ys = Float64[]
-        for h in hs
-            y = _numfold(ex, v, c + side * h)
-            y === nothing && break
-            push!(ys, y)
+# Is `ex` a ratio of polynomials in the limit variable? Only `+`, `-`, `*`, `/` and
+# integer powers qualify — and that is exactly the class the reciprocal route below
+# can finish. Admit a `sqrt` or an `exp` and substituting `v -> 1/u` trades a limit
+# at infinity for an essential singularity at `0`, which is harder, not easier:
+# `x^3/exp(x)` becomes `u^-3/exp(1/u)`, which no stage here can touch even though
+# the Gruntz engine handles the original perfectly well.
+function _isratpoly(ex)
+    x = _uw(ex)
+    x isa Number && return true
+    SU = Symbolics.SymbolicUtils
+    try
+        SU.iscall(x) || return true              # a bare symbol
+        op, as = SU.operation(x), SU.arguments(x)
+        if op === (^)
+            _uw(as[2]) isa Integer || return false
+            return _isratpoly(as[1])
         end
-        length(ys) == length(hs) || continue
-        d = diff(ys)
-        length(d) >= 2 || continue
-        abs(d[end]) < 0.1 * abs(d[1]) && continue      # increments collapsing: converges
-        all(<(0), d) && return -Inf
-        all(>(0), d) && return  Inf
+        (op === (+) || op === (-) || op === (*) || op === (/)) || return false
+        return all(_isratpoly, as)
+    catch
+        false
     end
-    nothing
+end
+
+# A rational function at infinity is a rational function at 0 under `v -> ±1/u`,
+# where cancellation settles it exactly. The Gruntz engine answers these too, but in
+# floating point: `(x^2-2x+2)/(4x^2+3x-2)` comes back as `0.25` where this gives
+# `1//4`. A study text should show the rational.
+function _reciprocal(ex, v, c, cancel, check, n, secs)
+    _isratpoly(ex) || return nothing
+    try
+        @variables u_recip::Real
+        r = substitute(ex, Dict(v => (c > 0 ? 1 : -1) / u_recip))
+        val, _ = _symlim(r, u_recip, 0, cancel, check, n, secs, :right)
+        val === nothing ? nothing : (val, :reciprocal)
+    catch
+        nothing
+    end
+end
+
+# Divergence, read off the side evidence already gathered.
+#
+# The previous version looped over both sides and returned from inside the loop on
+# the first one that diverged, never consulting the second — so `1/x` at `0` came
+# back as `+Inf`, the right-hand answer presented as a two-sided limit. A two-sided
+# claim now requires both sides to diverge the *same* way. Where only one side is
+# defined, that side is the limit, which is the ordinary reading of `lim log(x)`
+# as `x → 0`.
+function _diverges(side, L, R)
+    if side === :both
+        if L !== nothing && R !== nothing
+            (L[1] === :diverges && R[1] === :diverges && L[2] == R[2]) || return nothing
+            return L[2]
+        end
+        ev = L === nothing ? R : L
+    else
+        ev = side === :left ? L : R
+    end
+    (ev !== nothing && ev[1] === :diverges) ? ev[2] : nothing
 end
 
 """
-    symlim(ex, v, c; cancel = true, check = true, n = 8, secs = 10)
+    symlim(ex, v, c; side = :both, cancel = true, check = true, n = 8, secs = 10)
 
 Symbolic limit of the expression `ex` as the variable `v` approaches `c`.
 
@@ -339,8 +485,11 @@ rather than a guess.
 | `:substitution` | `ex` is defined at `c` | yes |
 | `:cancel` | a removable singularity `simplify_fractions` clears | yes |
 | `:series` | still indeterminate; leading-order Taylor comparison | yes |
+| `:reciprocal` | `c` is infinite and `ex` is a ratio of polynomials | yes |
 | `:gruntz` | `c` is infinite, or nothing above applied | float |
 | `:divergent_numeric` | the value grows without bound | `±Inf` |
+| `:sides_disagree` | left and right limits both exist and differ | — |
+| `:undefined_on_side` | a `side` was asked for that `ex` does not reach | — |
 | `:unresolved` | nothing worked | — |
 
 ```julia
@@ -357,10 +506,27 @@ julia> symlim(log(x)/x, x, Inf)
 
 julia> symlim(x * sin(1/x), x, 0)
 (nothing, :unresolved)
+
+julia> symlim(abs(x)/x, x, 0)
+(nothing, :sides_disagree)
+
+julia> symlim(abs(x)/x, x, 0; side = :right)
+(1, :series)
 ```
 
-That last one has the limit `0`, by the squeeze theorem. No method here can show
+`x·sin(1/x)` has the limit `0`, by the squeeze theorem. No method here can show
 that, so none claims to — see *Known limits* below.
+
+# Sidedness
+
+A limit exists at `c` only if the left and right limits both exist and agree, so
+`side = :both` refuses when they demonstrably do not: `abs(x)/x` and `1/x` at `0`
+are jumps, not limits. Ask for `:left` or `:right` to get the one-sided answer.
+
+Refusing needs *positive* evidence from both sides. Where `ex` simply does not
+reach `c` from one direction — `log(x)` at `0`, `x^x` at `0`, anything at the edge
+of its domain — the defined side is the answer, which is the ordinary reading of
+`lim_{x→0} log(x) = -∞`. Only a genuine two-sided disagreement is refused.
 
 # Why the ordering matters
 
@@ -377,11 +543,14 @@ only for the work it was built for.
   * `cancel = true` — clear removable singularities before the engine ever sees
     the expression. Setting `false` skips *that stage only*; the series stage
     below it will usually still find the right answer, so this is not a way to
-    observe the underlying engine misbehaving. For that, call
-    `SymbolicLimits.limit` directly.
-  * `check = true` — cross-check the symbolic answer against a numeric probe near
-    `c` and warn on disagreement. Leave this on. The failure modes it guards
-    against are silent, so nothing else will catch them.
+    observe the underlying engine misbehaving. Use `check = false` for that, or
+    call `SymbolicLimits.limit` directly.
+  * `side = :both` — `:left` or `:right` for a one-sided limit. See *Sidedness*.
+  * `check = true` — require every route's answer to agree with the numeric
+    evidence on the side being approached, and move to the next route when it does
+    not. Leave this on: the failure modes it guards against are silent, so nothing
+    else will catch them. Setting `false` returns the first route's answer
+    unchecked, which is the way to watch the engine misbehave.
   * `n` — highest order used by the series route.
   * `secs` — deadline for the Gruntz stage, which is the only one that can fail
     to terminate. **Start Julia with `-t 2` or more**, or the watchdog cannot run:
@@ -399,26 +568,57 @@ only for the work it was built for.
   * **Oscillatory expressions** such as `x·sin(1/x)`. Their limits follow from the
     squeeze theorem, which is not a computation any of these routes performs.
   * **`log` divergence cannot be delegated.** `SymbolicLimits.limit(log(u), u, 0,
-    :right)` returns `0` rather than `-Inf` (v1.1.5), so the numeric increment
-    test is what establishes these — load-bearing, not a convenience.
+    :right)` returns `0` rather than `-Inf` (v1.1.5). That answer now fails the
+    `check` comparison and is discarded, and the numeric increment test supplies
+    the `-Inf` — load-bearing, not a convenience.
+  * **Unknown symbolic exponents.** The order of `x^k` is `k`, so the limit of
+    `sin(sin(x^2))/x^k` at `0` is `0`, `1` or `∞` depending on `k` alone. The
+    series route declines rather than picking one; substitute a concrete `k`, or
+    rewrite `a^x` as `exp(x·log(a))` where the exponent is no longer the unknown.
+  * **Limits at infinity are mostly the Gruntz engine.** Ratios of polynomials go
+    through `:reciprocal` and come back exact. Everything else is a time-boxed call
+    into the engine, with no numeric evidence to check it against and no series to
+    take. It handles pure power/log/exp forms; add a `sin` or a `sqrt` —
+    `exp(-x)·sin(x)`, `x/sqrt(x^2+4)` — and the answer is `:unresolved`.
 
 See also [`tlim`](@ref), [`lim`](@ref).
 """
-function symlim(ex, v, c; cancel = true, check = true, n = 8, secs = 10)
-    val, route = _symlim(ex, v, c, cancel, n, secs)
-    if check && val !== nothing && c isa Number && isfinite(float(c)) && _usable(val, v)
-        nr = _numprobe(ex, v, c)
-        gv = _uw(_ground(val, v))
-        s  = gv isa Number ? float(gv) : NaN
-        if nr !== nothing && isfinite(s) && abs(s - nr) > 1e-3 * max(1, abs(nr))
-            @warn "symbolic and numeric limits disagree" symbolic=s numeric=nr route
-        end
-    end
-    (val, route)
+function symlim(ex, v, c; side = :both, cancel = true, check = true, n = 8, secs = 10)
+    side in (:both, :left, :right) ||
+        throw(ArgumentError("side must be :both, :left or :right; got $(repr(side))"))
+    _symlim(ex, v, c, cancel, check, n, secs, side)
 end
 
-function _symlim(ex, v, c, cancel, n, secs)
-    (c isa Number && isfinite(float(c))) || return _gruntz(ex, v, c; secs)
+function _symlim(ex, v, c, cancel, check, n, secs, side)
+    if !(c isa Number && isfinite(float(c)))
+        # Rational functions first, for an exact answer; everything else is the
+        # engine's own territory.
+        r = _reciprocal(ex, v, c, cancel, check, n, secs)
+        r === nothing || return r
+        return _gruntz(ex, v, c; secs, side)
+    end
+
+    L = side === :right ? nothing : _side(ex, v, c, -1)
+    R = side === :left  ? nothing : _side(ex, v, c, +1)
+
+    if side === :both
+        # A genuine jump: both sides speak, and they disagree. Refuse. This is the
+        # case that used to come back as a confident wrong number — `abs(x)/x` at 0
+        # returned `1.0`, `1/x` at 0 returned `Inf`.
+        if L !== nothing && R !== nothing &&
+           L[1] !== :erratic && R[1] !== :erratic && !_agree(L, R)
+            return (nothing, :sides_disagree)
+        end
+    elseif (side === :left ? L : R) === nothing
+        return (nothing, :undefined_on_side)
+    end
+
+    # The evidence each route's answer is checked against. Where both sides speak
+    # they agree by now, so either serves; where only one does, that is the side the
+    # limit is taken along.
+    ev = side === :left ? L : side === :right ? R : (L === nothing ? R : L)
+    ok(val) = !check || _consistent(val, ev, v)
+
     sub(e) = substitute(e, Dict(v => c))
 
     # 1. direct substitution — only where `ex` is genuinely defined at `c`.
@@ -428,7 +628,8 @@ function _symlim(ex, v, c, cancel, n, secs)
     num, den = numerator(ex), denominator(ex)
     n0, d0 = sub(num), sub(den)
     if _usable(d0, v) && !_symzero(d0) && _usable(n0, v) && _numfold(ex, v, c) !== nothing
-        return (simplify(n0 / d0), :substitution)
+        val = simplify(n0 / d0)
+        ok(val) && return (val, :substitution)
     end
 
     # 2. put over a common denominator and cancel. After a genuine cancellation
@@ -440,7 +641,8 @@ function _symlim(ex, v, c, cancel, n, secs)
             q = Symbolics.simplify_fractions(ex)
             nq, dq = sub(numerator(q)), sub(denominator(q))
             if _usable(dq, v) && !_symzero(dq) && _usable(nq, v) && _numfold(q, v, c) !== nothing
-                return (simplify(nq / dq), :cancel)
+                val = simplify(nq / dq)
+                ok(val) && return (val, :cancel)
             end
         catch
             q = ex
@@ -450,30 +652,20 @@ function _symlim(ex, v, c, cancel, n, secs)
     # 3. series comparison
     for target in (q, ex)
         r = tlim(numerator(target), denominator(target), v, c; n)
-        r === nothing || return (r, :series)
+        r === nothing && continue
+        ok(r) && return (r, :series)
     end
 
-    # 4. the Gruntz engine, last and time-boxed
-    g = _gruntz(ex, v, c; secs)
-    g[1] === nothing || return g
+    # 4. the Gruntz engine, last and time-boxed. Its answer is checked like any
+    #    other — this is what demotes `limit(log(u), u, 0, :right) -> 0` (v1.1.5)
+    #    rather than passing it on.
+    g = _gruntz(ex, v, c; secs, side)
+    g[1] !== nothing && ok(g[1]) && return g
 
     # 5. numeric evidence of divergence
-    d = _diverges(ex, v, c)
+    d = _diverges(side, L, R)
     d === nothing || return (d, :divergent_numeric)
 
     (nothing, :unresolved)
 end
 
-# Two-sided numeric probe, used only to cross-check a symbolic answer. Returns
-# `nothing` when the two sides disagree, so a genuine jump is never mistaken for
-# a mismatch in the symbolic result.
-function _numprobe(ex, v, c; hs = (1e-4, 1e-6))
-    vals = Float64[]
-    for h in hs, s in (1, -1)
-        y = _numfold(ex, v, c + s * h)
-        y === nothing || push!(vals, y)
-    end
-    isempty(vals) && return nothing
-    (maximum(vals) - minimum(vals)) > 1e-2 * max(1, abs(vals[1])) && return nothing
-    sum(vals) / length(vals)
-end
