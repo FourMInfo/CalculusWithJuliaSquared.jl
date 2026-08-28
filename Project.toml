@@ -35,7 +35,7 @@ Reexport = "1"
 Roots = "1, 2, 3"
 SpecialFunctions = "1, 2"
 SplitApplyCombine = "1"
-SymbolicLimits = "1.1"
+SymbolicLimits = "1"
 Symbolics = "7"
 julia = "1.10"
 
