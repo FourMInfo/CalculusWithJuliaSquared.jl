@@ -15,12 +15,25 @@ This package must have **zero Python anywhere in its dependency tree** — that 
 - **`src/CalculusWithJuliaSquared.jl`**: main module — `@reexport`s `Roots`, `LinearAlgebra`, `SpecialFunctions`, `IntervalSets`, `Symbolics`, and `Plots` (all hard dependencies: one `using CalculusWithJuliaSquared` gives symbolic math, root finding, and plotting with nothing else to load); imports and exports `ForwardDiff`; defines `const e = exp(1)`
 - **Topic files in `src/`**: `derivatives.jl`, `integration.jl`, `limits.jl`, `multidimensional.jl`, `plot-utils.jl`, `symbolics.jl` (symbolic `gradient`/`divergence`/`curl` for `Symbolics.Num`), `plots.jl` (all plotting functions and recipes)
 - **No package extensions**: upstream kept `Plots` behind a weak-dependency extension to serve diverse users; this fork serves one user who always plots, so everything lives directly in `src/` (the `Symbolics` and `Plots` promotions happened in v0.4.0 and v0.5.0 respectively)
-- **`docs/`**: minimal Documenter.jl site deploying to this repo's own `gh-pages` (see the `documenter-jl-conventions` skill when editing docs)
+- **`docs/`**: minimal Documenter.jl site (see the `documenter-jl-conventions` skill when editing docs). **Its published home is the `Calculus` repo, not this one** — `Calculus/docs/make.jl` builds these docstrings via `modules=[Calculus, CalculusWithJuliaSquared]` into an `@autodocs` page at <https://fourm.info/calculus/dev/API/CalculusWithJuliaSquared/>. This repo's own `deploydocs` still writes to its `gh-pages`, which has no Pages site and which nothing serves — vestigial; see `_research/OPEN_QUESTIONS.md`. **So a docstring added here reaches the site only when `Calculus` redeploys, and only if `Calculus`'s `[compat]` bound admits the version containing it** — see *Versioning & Releases* below.
 
 ## Workflow
 
-Follow the `phased-implementation-workflow` skill: branch per phase, PR when done, wait for CI + explicit approval, **squash-merge** (`gh pr merge --squash --delete-branch`). Small, explicitly-approved docs-only edits may go directly to `main`. The `knowledge-capture-conventions` skill governs where learnings go; plan documents live in the gitignored `_research/` folder (local-only, never commit).
+Follow the `phased-implementation-workflow` skill — it is the source of truth for branching, where PR boundaries fall, CI, and merge discipline; do not restate its rules here. The `knowledge-capture-conventions` skill governs where learnings go; plan documents live in the gitignored `_research/` folder (local-only, never commit).
 
-## Versioning & Registry Stance
+## Versioning & Releases
 
 Not registered in Julia's General registry; no upstream PRs intended (0.x SemVer marks divergence, not release-readiness). Never add registry tooling (TagBot etc.). Upstream is the `upstream` git remote — pull improvements by **cherry-picking** specific commits, not merging wholesale (the rename + fresh UUID make full merges conflict-heavy by design).
+
+**After every version bump here, bump `[compat] CalculusWithJuliaSquared` in `Calculus`.**
+Manifests are gitignored across these repos, so that bound is the *only* thing pinning a
+version — and when it is too tight nothing errors. The resolver quietly keeps the old
+release and the new API is simply absent. That is not hypothetical: `Calculus` sat on
+`"0.5.0"` (i.e. `< 0.6.0`) from v0.6.0 through v0.7.0, so `symlim` and `tlim` were invisible
+to `using Calculus` and missing from the published API docs, with no error anywhere and no
+symptom beyond a function that "should exist" not existing.
+
+Because each `0.x` minor is breaking in Julia's SemVer, the bound cannot be widened once to
+cover the future — it needs the edit every time. Convenient side effect: `Project.toml` is
+in the path filter that triggers `Calculus`'s docs deploy, so the same one-line bump both
+fixes resolution and publishes the new docstrings.
