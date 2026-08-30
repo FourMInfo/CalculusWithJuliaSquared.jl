@@ -158,6 +158,7 @@ end
 # ----------------------------------------------------------------------------
 
 import SymbolicLimits
+import IntervalArithmetic
 
 const _uw = Symbolics.value
 _isnum(e)   = _uw(e) isa Number
@@ -448,6 +449,60 @@ function _reciprocal(ex, v, c, cancel, check, n, secs)
     end
 end
 
+# The squeeze theorem, computed.
+#
+# Evaluate `ex` over a nested sequence of intervals closing on `c`, using interval
+# arithmetic, which returns a *rigorous enclosure* of every value the function takes
+# on that interval. If the enclosures collapse to a point, the limit exists and is
+# that point — every nearby value is trapped in a box whose width goes to zero,
+# which is exactly the squeeze argument. If they stay wide, there is nothing to
+# report and the route declines: `sin(x)` at infinity encloses to `[-1, 1]` at every
+# scale, correctly, because it has no limit.
+#
+# `build_function` emits `NaNMath` calls by default and NaNMath has no interval
+# methods, so `nanmath = false` is required, not cosmetic.
+#
+# Tried LAST. Intervals are useless on the indeterminate forms the earlier routes
+# exist for: over an interval containing 0, `sin(x)/x` encloses to `(-Inf, Inf)`,
+# because interval arithmetic cannot see that numerator and denominator vanish
+# together. That ordering is a starting position rather than a considered design —
+# see the workplan note in the notes repo before changing it on one example.
+function _squeeze(ex, v, c, side; hs = (1e-1, 1e-3, 1e-5, 1e-7))
+    IA = IntervalArithmetic
+    f = try
+        Symbolics.build_function(_ground(ex, v), v; expression = Val(false), nanmath = false)
+    catch
+        return nothing
+    end
+    mids, wids = Float64[], Float64[]
+    for h in hs
+        box = try
+            if c isa Number && isfinite(float(c))
+                cf = float(c)
+                side === :right ? IA.interval(cf, cf + h) :
+                side === :left  ? IA.interval(cf - h, cf) :
+                                  IA.interval(cf - h, cf + h)
+            else
+                m = 1 / h
+                c > 0 ? IA.interval(m, 1e300) : IA.interval(-1e300, -m)
+            end
+        catch
+            return nothing
+        end
+        y = try f(box) catch; return nothing end
+        y isa IA.Interval || return nothing
+        lo, hi = IA.inf(y), IA.sup(y)
+        (isfinite(lo) && isfinite(hi)) || return nothing
+        push!(mids, (lo + hi) / 2)
+        push!(wids, hi - lo)
+    end
+    length(wids) >= 2 || return nothing
+    # The enclosures must actually be closing, and end tight against their own scale.
+    wids[end] < wids[1]                          || return nothing
+    wids[end] < 1e-6 * max(1, abs(mids[end]))    || return nothing
+    mids[end]
+end
+
 # Divergence, read off the side evidence already gathered.
 #
 # The previous version looped over both sides and returned from inside the loop on
@@ -488,6 +543,7 @@ rather than a guess.
 | `:reciprocal` | `c` is infinite and `ex` is a ratio of polynomials | yes |
 | `:gruntz` | `c` is infinite, or nothing above applied | float |
 | `:divergent_numeric` | the value grows without bound | `±Inf` |
+| `:squeeze` | interval enclosures collapse to a point | float |
 | `:sides_disagree` | left and right limits both exist and differ | — |
 | `:undefined_on_side` | a `side` was asked for that `ex` does not reach | — |
 | `:unresolved` | nothing worked | — |
@@ -505,7 +561,7 @@ julia> symlim(log(x)/x, x, Inf)
 (0, :gruntz)
 
 julia> symlim(x * sin(1/x), x, 0)
-(nothing, :unresolved)
+(0.0, :squeeze)
 
 julia> symlim(abs(x)/x, x, 0)
 (nothing, :sides_disagree)
@@ -514,8 +570,11 @@ julia> symlim(abs(x)/x, x, 0; side = :right)
 (1, :series)
 ```
 
-`x·sin(1/x)` has the limit `0`, by the squeeze theorem. No method here can show
-that, so none claims to — see *Known limits* below.
+`x·sin(1/x)` has the limit `0` by the squeeze theorem, which the `:squeeze` route
+establishes: interval arithmetic bounds the function on a shrinking neighbourhood of
+`0`, and the enclosures collapse to a point. Where they do not collapse the route
+declines — `sin(x)` at infinity encloses to `[-1, 1]` at every scale, correctly,
+because it has no limit.
 
 # Sidedness
 
@@ -565,8 +624,14 @@ only for the work it was built for.
   * **`(1 + 1/x)^x` as `x → ∞`.** `SymbolicLimits` does not terminate on this, nor
     on the log/exp rewrite its own error message suggests; the deadline returns
     `:unresolved`.
-  * **Oscillatory expressions** such as `x·sin(1/x)`. Their limits follow from the
-    squeeze theorem, which is not a computation any of these routes performs.
+  * **Oscillation without a limit.** `sin(x)` as `x → ∞` genuinely has none. The
+    `:squeeze` route treats its enclosure `[-1, 1]` as a refusal rather than an answer;
+    call `IntervalArithmetic` directly to see the bound itself, which is the closest
+    analogue to what a `SymPy` user gets from `AccumBounds`.
+  * **`:squeeze` answers in floating point** and is tried last, because interval
+    arithmetic cannot see that a numerator and denominator vanish together: over an
+    interval containing `0`, `sin(x)/x` encloses to `(-Inf, Inf)`. Every exact route is
+    asked first for that reason.
   * **`log` divergence cannot be delegated.** `SymbolicLimits.limit(log(u), u, 0,
     :right)` returns `0` rather than `-Inf` (v1.1.5). That answer now fails the
     `check` comparison and is discarded, and the numeric increment test supplies
@@ -595,7 +660,11 @@ function _symlim(ex, v, c, cancel, check, n, secs, side)
         # engine's own territory.
         r = _reciprocal(ex, v, c, cancel, check, n, secs)
         r === nothing || return r
-        return _gruntz(ex, v, c; secs, side)
+        g = _gruntz(ex, v, c; secs, side)
+        g[1] === nothing || return g
+        sq = _squeeze(ex, v, c, side)
+        sq === nothing || return (sq, :squeeze)
+        return (nothing, :unresolved)
     end
 
     L = side === :right ? nothing : _side(ex, v, c, -1)
@@ -665,6 +734,10 @@ function _symlim(ex, v, c, cancel, check, n, secs, side)
     # 5. numeric evidence of divergence
     d = _diverges(side, L, R)
     d === nothing || return (d, :divergent_numeric)
+
+    # 6. the squeeze theorem, by rigorous enclosure
+    sq = _squeeze(ex, v, c, side)
+    sq === nothing || return (sq, :squeeze)
 
     (nothing, :unresolved)
 end
