@@ -1,11 +1,12 @@
 name = "CalculusWithJuliaSquared"
 uuid = "f826098b-d57e-4440-b91e-2a05d35c24ae"
-version = "0.7.0"
+version = "0.8.0"
 
 [deps]
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 Contour = "d38c429a-6771-53c6-b99e-75d170b6e991"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+IntervalArithmetic = "d1acc4aa-44c8-5952-acd4-ba5d80a2a253"
 IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
 Latexify = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -25,6 +26,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [compat]
 Contour = "0.5 - 0.6"
 ForwardDiff = "0.10,1"
+IntervalArithmetic = "1"
 IntervalSets = "0.7.13"
 Latexify = "0.16"
 PlotUtils = "1"

@@ -175,11 +175,21 @@ end
     @test !CalculusWithJuliaSquared._isratpoly(log(x)/x)
     @test  CalculusWithJuliaSquared._isratpoly((x^2 - 2x + 2)/(4x^2 + 3x - 2))
 
-    # -- honest refusals rather than plausible guesses.
-    #    x*sin(1/x) does have the limit 0, by the squeeze theorem; no route here
-    #    can show that, so none claims to. Symbolics folds 0*sin(1/0) to 0 by the
-    #    zero-product rule, and this guards against accepting that as an answer.
-    @test symlim(x * sin(1/x), x, 0)[1] === nothing
+    # -- SQUEEZE. x*sin(1/x) has the limit 0 by the squeeze theorem, which the
+    #    interval route now establishes rather than declining. Note the guard that
+    #    still matters underneath: Symbolics folds 0*sin(1/0) to 0 by the zero-product
+    #    rule, so :substitution must not claim this one — the route is what proves it.
+    @test symlim(x * sin(1/x), x, 0) == (0.0, :squeeze)
+    @test symlim(exp(-x) * sin(x), x, Inf) == (0.0, :squeeze)
+
+    #    but an enclosure that does not collapse is a refusal, not an answer:
+    #    sin(x) at infinity encloses to [-1, 1] at every scale because it has no limit
+    @test symlim(sin(x), x, Inf)[1] === nothing
+
+    #    and the route is last, so it never displaces an exact answer
+    @test symlim(sin(x)/x, x, 0)[2] === :series
+    @test symlim((x^2 - 1)/(x - 1), x, 1)[2] === :cancel
+    @test symlim(log(x), x, 0)[2] === :divergent_numeric
     @test symlim(cos(pi*x)/(1 - (2x)^2), x, 1//2)[1] === nothing   # pi floated by taylor
 
     # -- the stages back each other up: with cancellation switched off, the
