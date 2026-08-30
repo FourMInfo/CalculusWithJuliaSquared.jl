@@ -154,6 +154,11 @@ end
     #    delegated to it; the numeric increment test is what establishes it.
     @test symlim(log(x), x, 0)[1] == -Inf
     @test symlim(x^2 + 1 + log(11x - 15)/99, x, 15//11)[1] == -Inf
+    #    with `abs`, the function is defined on BOTH sides, so the two-sided rule
+    #    applies -- and the x^2 term outruns the log over the first decade, flipping
+    #    the sign of the first increment. Judging divergence from every increment
+    #    rather than the tail lost this one, which the published notes render.
+    @test symlim(x^2 + 1 + log(abs(11x - 15))/99, x, 15//11) == (-Inf, :divergent_numeric)
 
     # -- at infinity, where the Gruntz engine is at home
     @test symlim(log(x)/x, x, Inf)[1] == 0

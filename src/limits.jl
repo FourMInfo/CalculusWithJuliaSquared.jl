@@ -257,8 +257,15 @@ function _side(ex, v, c, s; hs = _SIDE_HS)
     # last samples of (1 - cos(x))/x^2 jitter in the 5th decimal — can land every
     # increment on one sign and read as divergence.
     abs(d[end]) < 1e-3 * max(1, abs(ys[end])) && return (:finite, ys[end])
-    all(<(0), d) && return (:diverges, -Inf)
-    all(>(0), d) && return (:diverges,  Inf)
+    # Divergence is a property of the tail, so judge the sign there. The first
+    # increment is taken at the coarsest step, where a smooth term can still be
+    # moving faster than the singular one and briefly reverse the sign: for
+    # x^2 + 1 + log(abs(11x-15))/99 at 15//11 the x^2 term outruns the log over the
+    # first decade, and requiring *every* increment to agree lost a genuine
+    # divergence the published notes depended on.
+    t = @view d[2:end]
+    all(<(0), t) && return (:diverges, -Inf)
+    all(>(0), t) && return (:diverges,  Inf)
     (:erratic, NaN)
 end
 
