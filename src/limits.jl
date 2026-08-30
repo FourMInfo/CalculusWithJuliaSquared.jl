@@ -469,6 +469,12 @@ end
 # `build_function` emits `NaNMath` calls by default and NaNMath has no interval
 # methods, so `nanmath = false` is required, not cosmetic.
 #
+# Only `interval`, `inf`, `sup` and the `Interval` type are used, all of which behave
+# identically on IntervalArithmetic 0.20 and 1.x. The compat bound admits both
+# deliberately: `ImplicitEquations` (used by the notes' implicit-plotting chapters)
+# pins 0.20.9 even at its latest release, and requiring 1.x here would make this
+# package unusable alongside it.
+#
 # Tried LAST. Intervals are useless on the indeterminate forms the earlier routes
 # exist for: over an interval containing 0, `sin(x)/x` encloses to `(-Inf, Inf)`,
 # because interval arithmetic cannot see that numerator and denominator vanish
