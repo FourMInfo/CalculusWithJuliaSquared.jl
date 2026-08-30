@@ -33,7 +33,13 @@ release and the new API is simply absent. That is not hypothetical: `Calculus` s
 to `using Calculus` and missing from the published API docs, with no error anywhere and no
 symptom beyond a function that "should exist" not existing.
 
-Because each `0.x` minor is breaking in Julia's SemVer, the bound cannot be widened once to
-cover the future — it needs the edit every time. Convenient side effect: `Project.toml` is
+Bump it on **patch releases too**, and pin the exact version (`"0.8.1"`, not `"0.8"`).
+A loose bound *admits* the new patch but does not *require* it: a fresh resolve picks the
+newest and is fine, while an existing checkout keeps whatever its gitignored Manifest holds
+and stays on the old patch indefinitely, with nothing forcing it forward. Pinning makes the
+old version stop satisfying the bound, which is the only forcing function available here —
+and a patch is exactly when it matters, since patches exist to fix regressions. (Each `0.x`
+minor is breaking in Julia's SemVer anyway, so the bound can never be widened once to cover
+the future.) Convenient side effect: `Project.toml` is
 in the path filter that triggers `Calculus`'s docs deploy, so the same one-line bump both
 fixes resolution and publishes the new docstrings.
