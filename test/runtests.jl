@@ -160,6 +160,21 @@ end
     @test symlim(x^7/exp(x), x, Inf)[1] == 0
     @test symlim(log(x)/x, x, Inf)[2] === :gruntz
 
+    # -- RATIONAL functions at infinity go through the reciprocal route instead, to
+    #    keep the answer exact: the engine returns 0.25 where the limit is 1//4.
+    @test symlim((x^2 - 2x + 2)/(4x^2 + 3x - 2), x,  Inf) == (1//4, :reciprocal)
+    @test symlim((x^2 - 2x + 2)/(4x^2 + 3x - 2), x, -Inf)[1] == 1//4
+    #    the point of the route: exact, where the engine gives the float 0.25
+    @test !(Symbolics.value(symlim((x^2 - 2x + 2)/(4x^2 + 3x - 2), x, Inf)[1]) isa AbstractFloat)
+    @test symlim((x + 1)/(x^3 + 2), x, Inf)[1] == 0
+    @test symlim(x^4/x^3, x, Inf)[1] == Inf
+    #    but only for that class: substituting x -> 1/u turns anything else into an
+    #    essential singularity at 0, so those must stay with the engine
+    @test symlim(x^7/exp(x), x, Inf)[2] === :gruntz
+    @test !CalculusWithJuliaSquared._isratpoly(x/sqrt(x^2 + 4))
+    @test !CalculusWithJuliaSquared._isratpoly(log(x)/x)
+    @test  CalculusWithJuliaSquared._isratpoly((x^2 - 2x + 2)/(4x^2 + 3x - 2))
+
     # -- honest refusals rather than plausible guesses.
     #    x*sin(1/x) does have the limit 0, by the squeeze theorem; no route here
     #    can show that, so none claims to. Symbolics folds 0*sin(1/0) to 0 by the
@@ -209,6 +224,50 @@ end
     @test tlim(1 - cos(x), x^2, x) == 1//2
     @test tlim(2sin(x) - sin(2x), x - sin(x), x) == 6
     @test tlim(sqrt(x + 1) - 1, x, x) == 1//2
+
+    # -- SIDEDNESS. A limit exists at c only if both one-sided limits exist and
+    #    agree. Both of these used to come back as confident wrong numbers:
+    #    abs(x)/x as `1.0` from the series route (a Taylor expansion of `abs`
+    #    about the one point it is not differentiable), and 1/x as `Inf` because
+    #    _diverges returned from inside its own `for side in (1,-1)` loop on the
+    #    first side that diverged and never consulted the second.
+    @test symlim(abs(x)/x, x, 0) == (nothing, :sides_disagree)
+    @test symlim(1/x, x, 0)      == (nothing, :sides_disagree)
+    @test symlim(1/x, x, 0; side = :right)[1] ==  Inf
+    @test symlim(1/x, x, 0; side = :left)[1]  == -Inf
+    @test symlim(x^x, x, 0; side = :right)[1] == 1
+    @test symlim(x^x * (1 + log(x)), x, 0; side = :right)[1] == -Inf
+    @test symlim(log(x), x, 0; side = :left) == (nothing, :undefined_on_side)
+    @test_throws ArgumentError symlim(sin(x)/x, x, 0; side = :up)
+
+    # -- A one-sided DOMAIN is not a disagreement. Where ex does not reach c from
+    #    one direction there is nothing to disagree with, and the defined side is
+    #    the limit — the ordinary reading of lim log(x) = -Inf as x -> 0. The
+    #    published notes render this cell, so a stricter rule here would silently
+    #    invalidate them.
+    @test symlim(log(x), x, 0)[2] === :divergent_numeric
+    @test symlim(x^x, x, 0)[1] == 1
+
+    # -- UNKNOWN SYMBOLIC EXPONENTS. The order of x^k is k, so the limit below is
+    #    0, 1 or Inf according to k alone; the series route ranked leading orders
+    #    as if k were fixed and returned 0. Pin a k and the same expression
+    #    resolves exactly — including k = 3, where the two sides now disagree
+    #    rather than reporting the right-hand answer as if it were the limit.
+    @variables k::Integer
+    @test symlim(sin(sin(x^2))/x^k, x, 0)[1] === nothing
+    @test tlim(sin(sin(x^2)), x^k, x) === nothing
+    @test symlim(sin(sin(x^2))/x^1, x, 0)[1] == 0
+    @test symlim(sin(sin(x^2))/x^2, x, 0)[1] == 1
+    @test symlim(sin(sin(x^2))/x^3, x, 0) == (nothing, :sides_disagree)
+    @test symlim(sin(sin(x^2))/x^3, x, 0; side = :right)[1] == Inf
+
+    # -- `check` demotes the engine's known-bad answer rather than passing it on.
+    #    SymbolicLimits returns 0 for log(x) at 0+ (v1.1.5, pinned above). Unchecked
+    #    that becomes symlim's answer; checked, it contradicts the numeric evidence
+    #    on the side being approached and the divergence test supplies -Inf instead.
+    @test symlim(log(x), x, 0; side = :right, check = false) == (0, :gruntz)
+    @test symlim(log(x), x, 0; side = :right)[1] == -Inf
+    @test symlim(log(x), x, 0; side = :right)[2] === :divergent_numeric
 
 end
 
