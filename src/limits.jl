@@ -194,6 +194,54 @@ function _usable(e, v)
     g isa Number ? (try isfinite(float(g)) catch; false end) : false
 end
 
+# Which sign does `g` hold just to one side of `c`? `s` is `+1` for the right, `-1`
+# for the left. Returns `0` when the samples disagree or `g` cannot be evaluated
+# there, so callers can decline rather than guess.
+function _sidesign(g, v, c, s; hs = (1e-2, 1e-4, 1e-6, 1e-8))
+    ys = Float64[]
+    for h in hs
+        y = _numfold(g, v, c + s * h)
+        y === nothing && return 0
+        push!(ys, y)
+    end
+    all(>(0), ys) && return  1
+    all(<(0), ys) && return -1
+    0
+end
+
+# `abs` has no derivative at a sign change, so `Symbolics.taylor(abs(w), w, 0:n)`
+# grounds it as `w` — right approaching from the right, wrong from the left, and
+# silently so. Nothing downstream recovers: `abs(x)/x` at `0` gave `1` for `:right`
+# but `:unresolved` for `:left`, where the answer is `-1`.
+#
+# Resolve each `abs` against the side actually being approached, by sampling its
+# argument there: on a side where the argument keeps one sign, `abs(g)` is `g` or
+# `-g` and the series stage sees a function it can expand. Where the sign is not
+# settled (a zero crossing inside the sample window) the `abs` is left in place and
+# the route declines, as before — this widens what `tlim` can answer, and never
+# invents a value.
+function _resolve_abs(ex, v, c, side)
+    side === :both && return ex
+    s  = side === :left ? -1 : +1
+    SU = Symbolics.SymbolicUtils
+    try
+        x = _uw(ex)
+        SU.iscall(x) || return ex
+        op   = SU.operation(x)
+        args = [_resolve_abs(a, v, c, side) for a in SU.arguments(x)]
+        if op === abs
+            g  = args[1]
+            sg = _sidesign(g, v, c, s)
+            sg ==  1 && return g
+            sg == -1 && return -g
+            return abs(g)
+        end
+        op(args...)
+    catch
+        ex
+    end
+end
+
 # Fold an expression to a number at a point; `nothing` if it is not defined there.
 function _numfold(ex, v, c)
     try
@@ -322,6 +370,15 @@ end
 _coeffs(t, w, n) = Any[substitute(t, Dict(w => 0));
                        [Symbolics.coeff(t, w^k) for k in 1:n]]
 
+# Julia's `/` on two `Int`s produces a `Float64`, so a series ratio whose leading
+# coefficients are both integers came back as `1.0` where the limit is exactly `1`.
+# The same reason the `:reciprocal` route exists — a study text should show the
+# rational. Anything not a pair of integers divides as before.
+function _exact_ratio(a, b)
+    x, y = _uw(a), _uw(b)
+    (x isa Integer && y isa Integer && !iszero(y)) ? x // y : a / b
+end
+
 # Ranking series only needs to know which coefficient is the first NON-ZERO one, and
 # that question is answerable for a symbolic coefficient too: 5x^4 is not zero.
 function _coeff_iszero(c)
@@ -389,6 +446,21 @@ Returns `nothing` when the method does not apply: an essential singularity, a
 coefficient that stays symbolic, or a numerator vanishing *slower* than the
 denominator (a pole rather than a limit).
 
+Pass `side = :left` or `:right` where the expression contains an `abs`. A series
+cannot see a sign change: `Symbolics.taylor(abs(w), w, 0:n)` returns `w`, which is
+the right answer only from the right. Given a side, each `abs` is first resolved
+against the sign its argument actually holds there, so `abs(x)/x` at `0` expands to
+`x/x` on the right and `-x/x` on the left:
+
+```julia
+julia> @variables x::Real;
+
+julia> tlim(abs(x), x, x, 0; side = :right), tlim(abs(x), x, x, 0; side = :left)
+(1, -1)
+```
+
+Where the sign is not settled the `abs` stays put and the method declines.
+
 Two cautions. The expansion point must be one the series can be taken about, so
 `v → ∞` is out of reach — use [`symlim`](@ref), which delegates those to the
 Gruntz engine. And a series argument is **circular** if used to *derive* the
@@ -398,10 +470,11 @@ circular in that way, since the limit is the goal rather than a step toward it.
 
 See also [`symlim`](@ref), [`lim`](@ref).
 """
-function tlim(num, den, v, c = 0; n = 6)
+function tlim(num, den, v, c = 0; n = 6, side = :both)
     (_symbolic_exponent(num) || _symbolic_exponent(den)) && return nothing
     try
         @variables w::Real
+        num, den = _resolve_abs(num, v, c, side), _resolve_abs(den, v, c, side)
         shift(e) = substitute(e, Dict(v => c + w))
         tn = Symbolics.taylor(shift(num), w, 0:n)
         td = Symbolics.taylor(shift(den), w, 0:n)
@@ -409,7 +482,7 @@ function tlim(num, den, v, c = 0; n = 6)
         on, od = _order(cn), _order(cd)
         (on === nothing || od === nothing) && return nothing
         on >  od && return 0
-        on == od && return simplify(cn[on + 1] / cd[od + 1])
+        on == od && return simplify(_exact_ratio(cn[on + 1], cd[od + 1]))
         nothing
     catch
         nothing
@@ -580,7 +653,10 @@ julia> symlim(abs(x)/x, x, 0)
 (nothing, :sides_disagree)
 
 julia> symlim(abs(x)/x, x, 0; side = :right)
-(1, :series)
+(1.0, :series)
+
+julia> symlim(abs(x)/x, x, 0; side = :left)
+(-1.0, :series)
 ```
 
 `x·sin(1/x)` has the limit `0` by the squeeze theorem, which the `:squeeze` route
@@ -733,7 +809,7 @@ function _symlim(ex, v, c, cancel, check, n, secs, side)
 
     # 3. series comparison
     for target in (q, ex)
-        r = tlim(numerator(target), denominator(target), v, c; n)
+        r = tlim(numerator(target), denominator(target), v, c; n, side)
         r === nothing && continue
         ok(r) && return (r, :series)
     end

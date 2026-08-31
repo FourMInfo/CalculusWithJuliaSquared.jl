@@ -248,6 +248,32 @@ end
     #    first side that diverged and never consulted the second.
     @test symlim(abs(x)/x, x, 0) == (nothing, :sides_disagree)
     @test symlim(1/x, x, 0)      == (nothing, :sides_disagree)
+
+    # `abs` under a one-sided limit. A Taylor series cannot see a sign change --
+    # `taylor(abs(w), w, 0:n)` is `w` -- so before v0.8.3 the right side answered
+    # `1` and the left silently declined, where the answer is `-1`. Each `abs` is
+    # now resolved against the sign its argument holds on the side approached.
+    # `[1]` may come back wrapped, so unwrap before comparing: `==` on a `Num`
+    # builds an equation rather than answering one.
+    sval(r) = Symbolics.value(r)
+    @test sval(symlim(abs(x)/x, x, 0; side = :right)[1]) ==  1
+    @test sval(symlim(abs(x)/x, x, 0; side = :left)[1])  == -1
+    @test symlim(abs(x)/x, x, 0; side = :right)[2] === :series
+    @test symlim(abs(x)/x, x, 0; side = :left)[2]  === :series
+    @test sval(symlim(x/abs(x), x, 0; side = :left)[1])  == -1
+    @test sval(symlim(abs(x), x, 0; side = :left)[1])    ==  0
+    # a shifted sign change: |x-2| is negative-argument to the left of 2
+    @test sval(symlim(abs(x - 2)/(x - 2), x, 2; side = :left)[1])  == -1
+    @test sval(symlim(abs(x - 2)/(x - 2), x, 2; side = :right)[1]) ==  1
+    # tlim gained the same keyword, and defaults to the old behaviour
+    @test sval(tlim(abs(x), x, x, 0; side = :right)) ==  1
+    @test sval(tlim(abs(x), x, x, 0; side = :left))  == -1
+    # ...and the two sides are reported in the SAME form. `/` on two `Int`s is
+    # Float64 in Julia, so the right side used to print `1.0` beside an exact
+    # `-1//1` on the left -- a matched pair rendered two different ways.
+    @test !(sval(symlim(abs(x)/x, x, 0; side = :right)[1]) isa AbstractFloat)
+    @test !(sval(symlim(abs(x)/x, x, 0; side = :left)[1])  isa AbstractFloat)
+    @test !(sval(tlim(abs(x), x, x, 0; side = :right))     isa AbstractFloat)
     @test symlim(1/x, x, 0; side = :right)[1] ==  Inf
     @test symlim(1/x, x, 0; side = :left)[1]  == -Inf
     @test symlim(x^x, x, 0; side = :right)[1] == 1
