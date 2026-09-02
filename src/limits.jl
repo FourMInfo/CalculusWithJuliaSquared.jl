@@ -190,8 +190,39 @@ function _usable(e, v)
     x = _uw(e)
     x isa Number && return try isfinite(float(x)) catch; false end
     any(isequal(Symbolics.unwrap(v)), Symbolics.get_variables(e)) && return false
+    _fold_const(e, v) === nothing || return true
     g = _uw(_ground(e, v))
     g isa Number ? (try isfinite(float(g)) catch; false end) : false
+end
+
+# An expression that is already constant but left UNEVALUATED.
+#
+# `substitute(sqrt(x), x => 0)` returns `sqrt(0)`, not `0`. That is not a `Number`,
+# and `_ground` cannot help because there are no free parameters to fill in — so the
+# substitution route judged a perfectly good answer unusable and declined. Found via
+# `symlim(sqrt(x), x, 0; side = :right)`, which returned `:unresolved` although the
+# limit is plainly `0`; the value was already available from `_numfold` all along.
+# Any `f(c)` Symbolics chooses not to evaluate hits this, so fold it here rather
+# than special-casing the function.
+function _fold_const(e, v)
+    x = _uw(e)
+    x isa Number && return isfinite(float(x)) ? x : nothing
+    isempty(Symbolics.get_variables(e)) || return nothing
+    try
+        f = Symbolics.build_function(e, v; expression = Val(false))
+        y = f(0.0)
+        (y isa Number && isfinite(float(y))) ? y : nothing
+    catch
+        nothing
+    end
+end
+
+# Return the folded number where the expression is constant, otherwise unchanged --
+# `5x^4` must stay symbolic, it is the honest answer to a limit taken in `h`.
+function _maybe_fold(e, v)
+    y = _fold_const(e, v)
+    y === nothing && return e
+    isinteger(y) && abs(y) < 1e15 ? Int(y) : y
 end
 
 # Which sign does `g` hold just to one side of `c`? `s` is `+1` for the right, `-1`
@@ -529,6 +560,164 @@ function _reciprocal(ex, v, c, cancel, check, n, secs)
     end
 end
 
+# `v -> 1/u` for anything, tried as a LAST resort.
+#
+# `_reciprocal` above is gated to ratios of polynomials, and that gate is right as a
+# *first* choice: substituting into `x^3/exp(x)` yields `u^-3/exp(1/u)`, which looks
+# far worse. But the stated fear does not survive measurement — that very expression
+# resolves at `0+` — and the gate blocks cases where the substitution is the whole
+# answer. `n*log(1 + 1/n)` at infinity is refused by every route; under `u = 1/n` it
+# is `log(1+u)/u` at `0`, which the series route settles exactly as `1`.
+#
+# So: try it for anything, but only after every other route has declined, and only
+# accept an answer the numeric evidence agrees with. Nothing that already resolves
+# can reach this stage, so no existing route label moves.
+function _recip_general(ex, v, c, cancel, check, n, secs)
+    (c isa Number && isfinite(float(c))) && return nothing   # only at ±∞
+    try
+        @variables u_rg::Real
+        r = substitute(ex, Dict(v => (c > 0 ? 1 : -1) / u_rg))
+        # Substituting `v -> 1/u` routinely leaves a nested fraction the later
+        # stages cannot see through: `n*log(n/(n+1))` becomes
+        # `(1/u)*log((1/u)/((1/u)+1))`, whose series expansion fails, while the
+        # reduced `log(1/(1+u))/u` settles at once. Try the reduced form too.
+        # Each candidate needs its OWN guard: the raw substituted form can *throw*
+        # rather than decline -- `n*log(n/(n+1))` becomes `log(1/((1 + 1/u)*u))/u`,
+        # which raises a DivideError -- and a single shared `try` would let that
+        # abort the loop before the reduced forms, which do resolve, are ever tried.
+        for cand in (r, (try Symbolics.simplify_fractions(r) catch; nothing end),
+                        (try simplify(r) catch; nothing end))
+            cand === nothing && continue
+            got = try
+                _symlim(cand, u_rg, 0, cancel, check, n, secs, :right)
+            catch
+                continue
+            end
+            (got[1] === nothing || got[2] === :unresolved) && continue
+            return got[1]
+        end
+        nothing
+    catch
+        nothing
+    end
+end
+
+# The limit of a composition, which is the rule the text states but the tooling did
+# not implement: for `f` continuous at `L`, `lim f(h(x)) = f(lim h(x))`.
+#
+# This is what stood between `symlim` and the `1^∞` family. `(1 + 1/n)^n` at infinity
+# is refused by every route, yet its inner limit is available exactly — rewrite the
+# power as `exp(n·log(1 + 1/n))`, take the inner limit (`1`), and the answer is `e`.
+# Without this stage the book had to do that composition in prose, which teaches the
+# reader nothing they can reuse.
+#
+# Tried last, after `:squeeze`, so it can only ever turn an `:unresolved` into an
+# answer — no expression that already resolves reaches here.
+const _CONTINUOUS = (exp, sin, cos, atan, tanh, sinh, cosh)
+
+function _composition(ex, v, c, cancel, check, n, secs, side, depth)
+    depth > 3 && return nothing
+    SU = Symbolics.SymbolicUtils
+    x = _uw(ex)
+    SU.iscall(x) || return nothing
+    op, as = SU.operation(x), SU.arguments(x)
+
+    # `f^g` with the variable in the exponent is the indeterminate-power family;
+    # rewrite to log-exp form and let the `exp` branch below handle it.
+    if op === (^) && length(as) == 2
+        base, expo = as
+        vars = Symbolics.get_variables(expo)
+        if any(isequal(Symbolics.unwrap(v)), vars)
+            return _composition(exp(expo * log(base)), v, c, cancel, check, n, secs, side, depth + 1)
+        end
+        return nothing
+    end
+
+    (op in _CONTINUOUS && length(as) == 1) || return nothing
+
+    L, route = _symlim(as[1], v, c, cancel, check, n, secs, side, depth + 1)
+    (L === nothing || route === :unresolved) && return nothing
+
+    g = _uw(L)
+    g isa Number || return nothing
+    y = try float(g) catch; return nothing end
+
+    # `exp` is the one place an infinite inner limit is still informative:
+    # `exp(-Inf)` is 0 and `exp(Inf)` is Inf. Everything else needs a finite `L`.
+    if !isfinite(y)
+        op === exp || return nothing
+        return y == -Inf ? 0.0 : Inf
+    end
+    val = try op(L) catch; return nothing end
+    _usable(val, v) || return nothing
+    _confirms(ex, v, c, val, side) ? val : nothing
+end
+
+# Does the original expression actually approach `val`? Composition applies `f` to an
+# inner limit, so an error in either half would otherwise pass straight through — and
+# a plausible wrong number is the failure mode this whole package exists to avoid.
+# At a finite `c` the ordinary side evidence already covers it; this is the check for
+# `c = ±∞`, where no `_side` evidence is gathered.
+function _confirms(ex, v, c, val, side; xs = (1e2, 1e3, 1e4))
+    y = _uw(val)
+    y isa Number || return true
+    target = try float(y) catch; return true end
+    s = (c isa Number && isfinite(float(c))) ? nothing : (c > 0 ? 1 : -1)
+    s === nothing && return true
+    seen = Float64[]
+    for X in xs
+        z = _numfold(ex, v, s * X)
+        z === nothing && return false
+        push!(seen, z)
+    end
+    if isfinite(target)
+        # the last sample should be near the claimed limit, and the trend toward it
+        return abs(seen[end] - target) <= 1e-2 * max(1, abs(target)) &&
+               abs(seen[end] - target) <= abs(seen[1] - target) + 1e-9
+    end
+    target ==  Inf && return all(>(0), seen) && seen[end] > seen[1]
+    target == -Inf && return all(<(0), seen) && seen[end] < seen[1]
+    true
+end
+
+# Does the answer depend on a free parameter we were never told anything about?
+#
+# `Symbolics` has no assumptions system, so a symbol carries no sign or range. The
+# engine will then happily answer for *one* branch with nothing marking which:
+# `exp(n·log(1+delta)) - n` at infinity returns `-Inf`, correct for `delta < 0` and
+# the exact opposite of the `delta > 0` reading a reader almost certainly intends.
+# That is worse than a refusal, because it arrives looking like an ordinary result.
+#
+# `symlim` already refuses when the two *sides* disagree. This is the same refusal
+# for two parameter *branches*: pin each free parameter to a positive and a negative
+# sample, take the limit again, and if specialising the general answer contradicts
+# the specialised limit, decline and say why.
+function _param_dependent(ex, v, c, val, cancel, check, n, secs, side)
+    ps = [p for p in Symbolics.get_variables(ex)
+          if !isequal(p, Symbolics.unwrap(v))]
+    isempty(ps) && return false
+    length(ps) > 2 && return false          # keep the cost bounded
+    for probe in (1//2, -1//2)
+        d = Dict(p => probe for p in ps)
+        specialised = try
+            s, r = _symlim(substitute(ex, d), v, c, cancel, check, n, secs, side)
+            (s === nothing || r === :unresolved) && continue
+            _uw(s)
+        catch
+            continue
+        end
+        general = try _uw(substitute(val, d)) catch; continue end
+        (specialised isa Number && general isa Number) || continue
+        a = try float(specialised) catch; continue end
+        b = try float(general)     catch; continue end
+        if isnan(a) || isnan(b) ||
+           (isinf(a) || isinf(b) ? a != b : abs(a - b) > 1e-3 * max(1, abs(a), abs(b)))
+            return true
+        end
+    end
+    false
+end
+
 # The squeeze theorem, computed.
 #
 # Evaluate `ex` over a nested sequence of intervals closing on `c`, using interval
@@ -630,8 +819,10 @@ rather than a guess.
 | `:gruntz` | `c` is infinite, or nothing above applied | float |
 | `:divergent_numeric` | the value grows without bound | `±Inf` |
 | `:squeeze` | interval enclosures collapse to a point | float |
+| `:composition` | `lim f(h) = f(lim h)` for `f` continuous at the inner limit | inherits |
 | `:sides_disagree` | left and right limits both exist and differ | — |
 | `:undefined_on_side` | a `side` was asked for that `ex` does not reach | — |
+| `:parameter_dependent` | the answer turns on a free parameter's sign or range | — |
 | `:unresolved` | nothing worked | — |
 
 ```julia
@@ -743,16 +934,36 @@ function symlim(ex, v, c; side = :both, cancel = true, check = true, n = 8, secs
     _symlim(ex, v, c, cancel, check, n, secs, side)
 end
 
-function _symlim(ex, v, c, cancel, check, n, secs, side)
+function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
+    # Guard every answer that carries a free parameter: an engine with no
+    # assumptions system will answer for one branch without saying which.
+    pd(val) = _param_dependent(ex, v, c, val, cancel, check, n, secs, side)
+
     if !(c isa Number && isfinite(float(c)))
         # Rational functions first, for an exact answer; everything else is the
         # engine's own territory.
         r = _reciprocal(ex, v, c, cancel, check, n, secs)
-        r === nothing || return r
+        if r !== nothing
+            return pd(r[1]) ? (nothing, :parameter_dependent) : r
+        end
         g = _gruntz(ex, v, c; secs, side)
-        g[1] === nothing || return g
+        if g[1] !== nothing
+            return pd(g[1]) ? (nothing, :parameter_dependent) : g
+        end
         sq = _squeeze(ex, v, c, side)
         sq === nothing || return (sq, :squeeze)
+        # Last resorts. Composition first, so the reported route names the method
+        # that actually settled it: `(1 + 1/n)^n` is the composition rule applied to
+        # a rewritten power, and reporting `:reciprocal` for it would describe the
+        # substitution that merely got the inner limit within reach.
+        co = _composition(ex, v, c, cancel, check, n, secs, side, depth)
+        if co !== nothing
+            return pd(co) ? (nothing, :parameter_dependent) : (co, :composition)
+        end
+        rg = _recip_general(ex, v, c, cancel, check, n, secs)
+        if rg !== nothing
+            return pd(rg) ? (nothing, :parameter_dependent) : (rg, :reciprocal)
+        end
         return (nothing, :unresolved)
     end
 
@@ -786,7 +997,7 @@ function _symlim(ex, v, c, cancel, check, n, secs, side)
     num, den = numerator(ex), denominator(ex)
     n0, d0 = sub(num), sub(den)
     if _usable(d0, v) && !_symzero(d0) && _usable(n0, v) && _numfold(ex, v, c) !== nothing
-        val = simplify(n0 / d0)
+        val = _maybe_fold(simplify(n0 / d0), v)
         ok(val) && return (val, :substitution)
     end
 
@@ -827,6 +1038,13 @@ function _symlim(ex, v, c, cancel, check, n, secs, side)
     # 6. the squeeze theorem, by rigorous enclosure
     sq = _squeeze(ex, v, c, side)
     sq === nothing || return (sq, :squeeze)
+
+    # 7. the limit of a composition — last, so it only ever rescues an
+    #    `:unresolved`. `lim f(h) = f(lim h)` for `f` continuous at the inner limit.
+    co = _composition(ex, v, c, cancel, check, n, secs, side, depth)
+    if co !== nothing
+        return pd(co) ? (nothing, :parameter_dependent) : (co, :composition)
+    end
 
     (nothing, :unresolved)
 end

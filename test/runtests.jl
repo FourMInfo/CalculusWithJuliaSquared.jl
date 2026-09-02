@@ -265,6 +265,63 @@ end
     # a shifted sign change: |x-2| is negative-argument to the left of 2
     @test sval(symlim(abs(x - 2)/(x - 2), x, 2; side = :left)[1])  == -1
     @test sval(symlim(abs(x - 2)/(x - 2), x, 2; side = :right)[1]) ==  1
+    # symbols for the composition / parameter-dependence tests below
+    @variables n::Real d::Real m::Real
+
+    # ---- :composition -- lim f(h) = f(lim h) for f continuous at the inner limit.
+    #      This is what stood between symlim and the 1^inf family.
+    @test symlim((1 + 1/n)^n, n, Inf)[1] ≈ exp(1)
+    @test symlim((1 + 2/n)^n, n, Inf)[1] ≈ exp(2)
+    @test symlim((n/(n+1))^n, n, Inf)[1] ≈ exp(-1)
+    @test symlim((1 + 1/n)^n, n, Inf)[2] === :composition
+
+    #      ADVERSARIAL: the route must be a LAST resort. Everything that resolved
+    #      before must still resolve the SAME WAY -- a route label is a compatibility
+    #      surface the notes quote, so a silent relabel is a break even when the
+    #      value is right.
+    @test symlim(log(x)/x, x, Inf)[2]                        === :gruntz
+    @test symlim(x^7/exp(x), x, Inf)[2]                      === :gruntz
+    @test symlim((x^2 - 2x + 2)/(4x^2 + 3x - 2), x, Inf)[2]  === :reciprocal
+    @test symlim(x^4/x^3, x, Inf)[2]                         === :reciprocal
+    @test symlim(exp(-x) * sin(x), x, Inf)[2]                === :squeeze
+    @test symlim(x * sin(1/x), x, 0)[2]                      === :squeeze
+    @test symlim(sin(x)/x, x, 0)[2]                          === :series
+    @test symlim((x^2 - 1)/(x - 1), x, 1)[2]                 === :cancel
+    #      ...and the refusals must still refuse
+    @test symlim(sin(x), x, Inf)      == (nothing, :unresolved)
+    @test symlim(abs(x)/x, x, 0)      == (nothing, :sides_disagree)
+
+    #      ADVERSARIAL: composition must not reach through a function that is NOT
+    #      continuous at the inner limit. `log` and `sqrt` are deliberately absent
+    #      from the continuous set -- log(x) at 0 must stay divergent-by-evidence,
+    #      not become `log(0)` handed back as a composed answer.
+    @test symlim(log(x), x, 0; side = :right)[2] === :divergent_numeric
+    #      `sqrt` at 0+ is unresolved for reasons predating this route (it resolves
+    #      fine away from the branch point, e.g. at 4). What matters here is that
+    #      composition does not step in and manufacture an answer for it.
+    @test symlim(sqrt(x), x, 0; side = :right)[2] !== :composition
+    @test symlim(sqrt(x), x, 4)[1] == 2
+
+    #      ADVERSARIAL: a composed answer is confirmed against the function itself,
+    #      so an inner limit that is right cannot smuggle out a wrong outer value.
+    @test symlim(exp(1/x), x, Inf)[1] ≈ 1
+    @test symlim(exp(-x^2), x, Inf)[1] == 0
+
+    # ---- :parameter_dependent -- refuse rather than answer for an unstated branch.
+    #      With `delta` free the engine returns -Inf, correct for delta < 0 and the
+    #      opposite of the delta > 0 reading intended; that is worse than a refusal
+    #      because it looks like an ordinary result.
+    @test symlim(exp(n*log(1 + d)) - n, n, Inf) == (nothing, :parameter_dependent)
+    @test symlim(exp(n*log(3//2)) - n, n, Inf)[1] ==  Inf   # pinned, r > 1
+    @test symlim(exp(n*log(1//2)) - n, n, Inf)[1] == -Inf   # pinned, r < 1
+
+    #      ADVERSARIAL: it must NOT fire when the answer holds for every value of the
+    #      parameter. Over-refusing would be as bad as the wrong answer it replaces.
+    @test symlim(exp(m*log(x) - x), x, Inf)[1] == 0          # 0 for all real m
+    @test isequal(symlim(((x+h)^5 - x^5)/h, h, 0)[1], 5x^4)  # free x, still fine
+    @test symlim(sin(h)/h, h, 0)[1] == 1                     # no free parameter at all
+    @test symlim(log(x)/x, x, Inf)[1] == 0
+
     # tlim gained the same keyword, and defaults to the old behaviour
     @test sval(tlim(abs(x), x, x, 0; side = :right)) ==  1
     @test sval(tlim(abs(x), x, x, 0; side = :left))  == -1
