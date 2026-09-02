@@ -46,4 +46,12 @@ jobs:
             ${{ runner.os }}-
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+        env:
+          # `symlim`'s watchdog for a hung `SymbolicLimits` call runs the call on a
+          # worker thread and gives up after `secs`. A hung Gruntz call is CPU-bound
+          # and never yields, so on a SINGLE thread the watchdog starves and the
+          # suite hangs instead of the route declining. The tests deliberately
+          # exercise those paths -- the `1^inf` family reaches Gruntz on inputs that
+          # do hang -- so the suite needs room for the watchdog to actually run.
+          JULIA_NUM_THREADS: '4'
       - uses: julia-actions/julia-processcoverage@v1
