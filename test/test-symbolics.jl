@@ -31,3 +31,24 @@ end
     @test isequal(gradient(f), Symbolics.gradient(f, collect(Symbolics.get_variables(f))))
 
 end
+
+@testset "Nemo extension" begin
+
+    # `symbolic_solve` on a polynomial needs Symbolics' Nemo extension, which is only
+    # active once Nemo is loaded. This package imports it, so a plain
+    # `using CalculusWithJuliaSquared` is enough -- no `using Nemo` downstream.
+    @test Base.get_extension(Symbolics, :SymbolicsNemoExt) !== nothing
+    @variables c::Real x::Real
+    @test Symbolics.value.(symbolic_solve(c + 3 ~ 0, c)) == [-3]
+    @test Symbolics.value.(symbolic_solve(2c + 3 ~ 0, c)) == [-3//2]
+    @test length(symbolic_solve(x^2 - 2, x)) == 2
+
+    # ...and it is an `import`, not a reexport: nothing of Nemo's leaks into the
+    # namespace, where `derivative`, `coeff` and `roots` would collide with Symbolics.
+    @test !isdefined(@__MODULE__, :ZZ)
+    @test !isdefined(@__MODULE__, :QQ)
+    @test :Nemo ∉ names(CalculusWithJuliaSquared)
+    @test !isdefined(@__MODULE__, :derivative)          # Nemo exports one; Symbolics does not — neither may appear
+    @test isequal(Symbolics.value(Symbolics.derivative(x^2, x)), Symbolics.value(2x))
+
+end
