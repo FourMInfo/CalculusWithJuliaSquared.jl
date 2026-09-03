@@ -168,12 +168,31 @@ _symzero(e) = _isnum(e) && iszero(_uw(e))
 # the numeric guards below can still run on an expression carrying parameters. The
 # limit of ((x+h)^5 - x^5)/h in `h` is 5x^4 — perfectly valid, but nothing about it
 # can be evaluated to a number until `x` is pinned down.
+#
+# The sample is keyed by the symbol's NAME and kept for the session, so `c` grounds to
+# the same number in every call. It used to be assigned by the symbol's position in
+# `get_variables`, and that position is not stable: `c` is the second variable of
+# `x^2 + c` but the first of the answer `c` on its own. The evidence was gathered at
+# one value and the answer judged at another, the check rejected a correct
+# `:substitution`, and the fall-through reached `:squeeze`, which grounded `c` a third
+# time and reported the sample: `symlim(3x^2 + c, x, 0; side = :right)` returned
+# `1.5247…`. Found on the continuity chapter, whose one site is exactly that.
+const _GROUND_SAMPLES = Dict{Symbol,Float64}()
+const _GROUND_LOCK    = ReentrantLock()
+
+function _ground_sample(u)
+    lock(_GROUND_LOCK) do
+        get!(_GROUND_SAMPLES, Symbol(string(u))) do
+            1.3247179572447458 + 0.1 * (length(_GROUND_SAMPLES) + 1)   # not 0, 1 or π
+        end
+    end
+end
+
 function _ground(ex, v)
-    vs = Symbolics.get_variables(ex)
-    d  = Dict()
-    for (i, u) in enumerate(vs)
+    d = Dict()
+    for u in Symbolics.get_variables(ex)
         isequal(u, Symbolics.unwrap(v)) && continue
-        d[u] = 1.3247179572447458 + 0.1i    # nothing special; just not 0, 1 or π
+        d[u] = _ground_sample(u)
     end
     isempty(d) ? ex : substitute(ex, d)
 end
@@ -364,10 +383,20 @@ end
 # Is a route's answer consistent with the evidence? True whenever there is nothing
 # to contradict it — a symbolic answer that will not ground to a number, an
 # `:erratic` side, no evidence at all.
+#
+# A constant that Symbolics leaves UNEVALUATED is an opinion, not the absence of one.
+# `substitute(sign(x), x => 0)` is `sign(0)`, which is not a `Number`, and treating it
+# as "nothing to contradict" let `symlim(sign(x), x, 0; side = :right)` return
+# `(sign(0), :cancel)` — that is `0`, where the limit is `1`. Fold before judging.
 function _consistent(val, ev, v)
     (ev === nothing || ev[1] === :erratic) && return true
-    g = _uw(_ground(val, v))
-    g isa Number || return true
+    gv = _ground(val, v)
+    g  = _uw(gv)
+    if !(g isa Number)
+        y0 = _fold_const(gv, v)
+        y0 === nothing && return true
+        g = y0
+    end
     y = try float(g) catch; return true end
     ev[1] === :finite && return abs(y - ev[2]) <= 1e-3 * max(1, abs(ev[2]))
     y == ev[2]
@@ -376,6 +405,15 @@ end
 # Run `f()` on a worker thread, giving up after `secs`. A hung `SymbolicLimits`
 # call is CPU-bound and never yields, so a same-thread watchdog would starve —
 # this needs Julia started with `-t 2` or more to be effective.
+#
+# Giving up does not stop the call: a CPU-bound task cannot be interrupted, so it
+# keeps its thread until it finishes, if ever. Enough abandoned calls and the pool is
+# full, and every later call waits out `secs` for a thread it may never get. Declining
+# early while the pool is saturated was tried and rejected: it made `log(x)/x` at
+# infinity route through `:squeeze` because *earlier* calls had hung, and a route's
+# answer must not depend on the session's history. The guard in `_param_dependent`
+# treats a probe that times out as unsettled, which is the correctness half; the
+# latency half is the cost of a watchdog that cannot kill.
 function _timed(f, secs)
     t = Threads.@spawn try f() catch; nothing end
     for _ in 1:round(Int, secs * 20)
@@ -692,24 +730,48 @@ end
 # for two parameter *branches*: pin each free parameter to a positive and a negative
 # sample, take the limit again, and if specialising the general answer contradicts
 # the specialised limit, decline and say why.
+#
+# The same check guards every route that can only produce a NUMBER — `:squeeze`,
+# `:divergent_numeric`, the engine at a finite point. Those routes work on the
+# grounded expression, so with a free parameter present their answer is a statement
+# about the sample value, not about the parameter: `c + x*sin(1/x)` at 0 came back as
+# `(1.4247…, :squeeze)`, the sample standing in for `c`. Specialising catches it, and
+# leaves `c*x*sin(1/x)` — whose limit is 0 for every `c` — alone.
+#
+# Every parameter is pinned to the same probe, which keeps this to two extra limits
+# however many parameters there are. The earlier cap of two parameters saved nothing
+# and removed the guard exactly where a fabricated number is hardest to notice.
 function _param_dependent(ex, v, c, val, cancel, check, n, secs, side)
     ps = [p for p in Symbolics.get_variables(ex)
           if !isequal(p, Symbolics.unwrap(v))]
     isempty(ps) && return false
-    length(ps) > 2 && return false          # keep the cost bounded
+    # A probe that cannot be settled is not evidence of independence. For a SYMBOLIC
+    # answer that is tolerable — it still shows the parameter, and a reader can judge
+    # it. For a NUMBER it is not: nothing marks which branch the number belongs to, so
+    # an unsettled probe has to count as dependence. Before this, a probe whose Gruntz
+    # call timed out — on CI, where abandoned hung calls from earlier `1^∞` cases had
+    # the thread pool and the watchdog gave up — was skipped as "no opinion", and
+    # `exp(n·log(1+d)) - n` came back `(-Inf, :gruntz)` after all.
+    numeric = _uw(val) isa Number
     for probe in (1//2, -1//2)
         d = Dict(p => probe for p in ps)
         specialised = try
             s, r = _symlim(substitute(ex, d), v, c, cancel, check, n, secs, side)
-            (s === nothing || r === :unresolved) && continue
-            _uw(s)
+            (s === nothing || r === :unresolved) ? nothing : _uw(s)
         catch
+            nothing
+        end
+        if specialised === nothing
+            numeric && return true
             continue
         end
-        general = try _uw(substitute(val, d)) catch; continue end
-        (specialised isa Number && general isa Number) || continue
-        a = try float(specialised) catch; continue end
-        b = try float(general)     catch; continue end
+        general = try _uw(substitute(val, d)) catch; nothing end
+        if general === nothing || !(specialised isa Number && general isa Number)
+            numeric && return true
+            continue
+        end
+        a = try float(specialised) catch; numeric && return true; continue end
+        b = try float(general)     catch; numeric && return true; continue end
         if isnan(a) || isnan(b) ||
            (isinf(a) || isinf(b) ? a != b : abs(a - b) > 1e-3 * max(1, abs(a), abs(b)))
             return true
@@ -728,6 +790,19 @@ end
 # report and the route declines: `sin(x)` at infinity encloses to `[-1, 1]` at every
 # scale, correctly, because it has no limit.
 #
+# The boxes EXCLUDE `c` itself: `[c + h/10, c + h]` on the right, its mirror on the
+# left, and for a two-sided limit the hull of the two must collapse. A limit never
+# consults `f(c)`, so this is the faithful formulation, and it is the one that lets
+# a step function resolve from one side — `floor` over `[-h, -h/10]` is `[-1, -1]`,
+# while over `[-h, 0]` it was `[-1, 0]` and never collapsed. It is also monotone:
+# the annulus sits inside the old box, so nothing that collapsed before stops.
+#
+# The answer's TYPE reports how it was established (`_snap`): exact when the enclosure
+# has zero width, `0.0` when it contains zero, otherwise the float midpoint. Reporting
+# the raw midpoint gave `-1.0e-14` for `x^2*(cos(1/x) - 1)` at 0, which is arithmetic
+# debris, not a limit; snapping further, to the simplest rational inside the box,
+# would print a bound exactly like a derivation.
+#
 # `build_function` emits `NaNMath` calls by default and NaNMath has no interval
 # methods, so `nanmath = false` is required, not cosmetic.
 #
@@ -738,10 +813,32 @@ end
 # package unusable alongside it.
 #
 # Tried LAST. Intervals are useless on the indeterminate forms the earlier routes
-# exist for: over an interval containing 0, `sin(x)/x` encloses to `(-Inf, Inf)`,
-# because interval arithmetic cannot see that numerator and denominator vanish
-# together. That ordering is a starting position rather than a considered design —
+# exist for: `sin(x)/x` over `[h/10, h]` encloses to roughly `[0.1, 10]` however
+# small `h` is, because interval arithmetic cannot see that the two occurrences of
+# `x` are the same number (the dependency problem). `x*floor(1/x)` declines for the
+# same reason. That ordering is a starting position rather than a considered design —
 # see the workplan note in the notes repo before changing it on one example.
+# What a collapsed enclosure is allowed to claim. The number's TYPE reports how the
+# answer was established: an enclosure of zero width is exact — `floor` over
+# `[-h, -h/10]` is precisely `[-1, -1]` — and reports the integer; one that contains 0
+# reports `0.0`, the clean zero this package prefers to `-1.0e-14`, still typed as the
+# bound it is; anything else is the midpoint, a float, because a float is all a bound
+# knows. Snapping `[0.66666, 0.66667]` to `2//3` was tried and rejected: it prints a
+# bound exactly like a derivation, and the notes lean on being able to tell them apart.
+function _snap(lo, hi)
+    if lo == hi
+        return (isinteger(lo) && abs(lo) < 1e15) ? Int(lo) : lo
+    end
+    lo <= 0 <= hi && return 0.0
+    # A band that closes at the scale rate but never gets tight is not a point. The
+    # dependency problem makes `log(x)/x` over `[m, 1e300]` enclose to `[~0, 690/m]`,
+    # which shrinks like `1/m` and passes the relative test while still `7e-5` wide at
+    # the last scale; the midpoint of that is not a limit, it is half a band.
+    mid = (lo + hi) / 2
+    (hi - lo) < 1e-6 * max(1, abs(mid)) || return nothing
+    mid
+end
+
 function _squeeze(ex, v, c, side; hs = (1e-1, 1e-3, 1e-5, 1e-7))
     IA = IntervalArithmetic
     f = try
@@ -749,33 +846,49 @@ function _squeeze(ex, v, c, side; hs = (1e-1, 1e-3, 1e-5, 1e-7))
     catch
         return nothing
     end
-    mids, wids = Float64[], Float64[]
+    finite = c isa Number && isfinite(float(c))
+    sides  = finite ? (side === :right ? (+1,) : side === :left ? (-1,) : (-1, +1)) :
+                      (c > 0 ? (+1,) : (-1,))
+    los, his = Float64[], Float64[]
     for h in hs
-        box = try
-            if c isa Number && isfinite(float(c))
-                cf = float(c)
-                side === :right ? IA.interval(cf, cf + h) :
-                side === :left  ? IA.interval(cf - h, cf) :
-                                  IA.interval(cf - h, cf + h)
-            else
-                m = 1 / h
-                c > 0 ? IA.interval(m, 1e300) : IA.interval(-1e300, -m)
+        lo, hi = Inf, -Inf
+        for s in sides
+            box = try
+                if finite
+                    cf = float(c)
+                    s > 0 ? IA.interval(cf + h / 10, cf + h) : IA.interval(cf - h, cf - h / 10)
+                else
+                    m = 1 / h
+                    s > 0 ? IA.interval(m, 1e300) : IA.interval(-1e300, -m)
+                end
+            catch
+                return nothing
             end
-        catch
-            return nothing
+            y = try f(box) catch; return nothing end
+            y isa IA.Interval || return nothing
+            l, u = IA.inf(y), IA.sup(y)
+            (isfinite(l) && isfinite(u)) || return nothing
+            lo, hi = min(lo, l), max(hi, u)
         end
-        y = try f(box) catch; return nothing end
-        y isa IA.Interval || return nothing
-        lo, hi = IA.inf(y), IA.sup(y)
-        (isfinite(lo) && isfinite(hi)) || return nothing
-        push!(mids, (lo + hi) / 2)
-        push!(wids, hi - lo)
+        push!(los, lo)
+        push!(his, hi)
     end
+    wids = his .- los
     length(wids) >= 2 || return nothing
-    # The enclosures must actually be closing, and end tight against their own scale.
-    wids[end] < wids[1]                          || return nothing
-    wids[end] < 1e-6 * max(1, abs(mids[end]))    || return nothing
-    mids[end]
+    mid = (los[end] + his[end]) / 2
+    # Closing at the rate the scales close. The step sizes fall by 1e-6 across `hs`,
+    # so a function with a limit sees its enclosure widths fall by about that factor
+    # too. The bound is RELATIVE, which makes the coefficient's size irrelevant —
+    # `1000*x*sin(1/x)` closes as surely as `x*sin(1/x)`, where an absolute `1e-6`
+    # refused it, and refused `c*x*sin(1/x)` or not depending on which sample value
+    # the session had handed `c`. A width that stays put is an oscillation, however
+    # tiny: `1e-9*sin(1/x)` sits under any absolute bound at every scale and has no
+    # limit. A zero-width enclosure is a step function, already closed. The price is
+    # that a limit approached more slowly than linearly — `sqrt(x)*sin(1/x)` —
+    # declines; at four scales there is no telling it from an oscillation.
+    closing = wids[1] == 0 ? wids[end] == 0 : wids[end] <= 3e-6 * wids[1]
+    closing                                      || return nothing
+    _snap(los[end], his[end])
 end
 
 # Divergence, read off the side evidence already gathered.
@@ -818,11 +931,11 @@ rather than a guess.
 | `:reciprocal` | `c` is infinite and `ex` is a ratio of polynomials | yes |
 | `:gruntz` | `c` is infinite, or nothing above applied | float |
 | `:divergent_numeric` | the value grows without bound | `±Inf` |
-| `:squeeze` | interval enclosures collapse to a point | float |
+| `:squeeze` | interval enclosures, `c` excluded, collapse to a point | only when the enclosure has zero width; else float |
 | `:composition` | `lim f(h) = f(lim h)` for `f` continuous at the inner limit | inherits |
 | `:sides_disagree` | left and right limits both exist and differ | — |
 | `:undefined_on_side` | a `side` was asked for that `ex` does not reach | — |
-| `:parameter_dependent` | the answer turns on a free parameter's sign or range | — |
+| `:parameter_dependent` | the answer turns on a free parameter, or a numeric route would have to invent a value for one | — |
 | `:unresolved` | nothing worked | — |
 
 ```julia
@@ -844,17 +957,37 @@ julia> symlim(abs(x)/x, x, 0)
 (nothing, :sides_disagree)
 
 julia> symlim(abs(x)/x, x, 0; side = :right)
-(1.0, :series)
+(1//1, :series)
 
 julia> symlim(abs(x)/x, x, 0; side = :left)
-(-1.0, :series)
+(-1//1, :series)
+
+julia> symlim(floor(x), x, 0; side = :right), symlim(floor(x), x, 0; side = :left)
+((0, :substitution), (-1, :squeeze))
+
+julia> @variables c::Real;
+
+julia> symlim(3x^2 + c, x, 0; side = :right)
+(c, :substitution)
 ```
 
 `x·sin(1/x)` has the limit `0` by the squeeze theorem, which the `:squeeze` route
 establishes: interval arithmetic bounds the function on a shrinking neighbourhood of
 `0`, and the enclosures collapse to a point. Where they do not collapse the route
 declines — `sin(x)` at infinity encloses to `[-1, 1]` at every scale, correctly,
-because it has no limit.
+because it has no limit. The boxes exclude `c` itself, since a limit never consults
+`f(c)`; that is what lets `floor` resolve from the left, where the value at `0` is
+not the limit.
+
+`:substitution` is the definition of continuity, computed: the value at `c` exists and
+the function approaches it. The route says so. `floor` from the right is
+`:substitution` and from the left is not, which is the statement that `floor` is
+right-continuous at the integers.
+
+A free parameter rides through the exact routes — `c`, `5x^4`, `1/x` are all honest
+answers to limits taken in another variable. A route that can only produce a number
+(`:squeeze`, `:divergent_numeric`, the engine at a finite point) is not allowed to
+invent a value for one, and refuses with `:parameter_dependent` instead.
 
 # Sidedness
 
@@ -865,7 +998,8 @@ are jumps, not limits. Ask for `:left` or `:right` to get the one-sided answer.
 Refusing needs *positive* evidence from both sides. Where `ex` simply does not
 reach `c` from one direction — `log(x)` at `0`, `x^x` at `0`, anything at the edge
 of its domain — the defined side is the answer, which is the ordinary reading of
-`lim_{x→0} log(x) = -∞`. Only a genuine two-sided disagreement is refused.
+`lim_{x→0} log(x) = -∞`, and every route is asked for that side's limit. Only a
+genuine two-sided disagreement is refused.
 
 # Why the ordering matters
 
@@ -900,7 +1034,9 @@ only for the work it was built for.
   * **Expansion points involving `π`.** `Symbolics.taylor` converts `π` to a float
     and then to a rational, so a series about `π/2` carries a spurious constant
     term near `1e-17` instead of an exact `0`, which defeats leading-order
-    ranking. `Num(pi)` does not help. Use [`lim`](@ref) for those.
+    ranking. A `Num` limit point such as `Num(pi)/2` is folded to a float at the
+    door, so it behaves exactly like `pi/2` and does not help either. Use
+    [`lim`](@ref) for those.
   * **`(1 + 1/x)^x` as `x → ∞`.** `SymbolicLimits` does not terminate on this, nor
     on the log/exp rewrite its own error message suggests; the deadline returns
     `:unresolved`.
@@ -908,10 +1044,17 @@ only for the work it was built for.
     `:squeeze` route treats its enclosure `[-1, 1]` as a refusal rather than an answer;
     call `IntervalArithmetic` directly to see the bound itself, which is the closest
     analogue to what a `SymPy` user gets from `AccumBounds`.
-  * **`:squeeze` answers in floating point** and is tried last, because interval
-    arithmetic cannot see that a numerator and denominator vanish together: over an
-    interval containing `0`, `sin(x)/x` encloses to `(-Inf, Inf)`. Every exact route is
-    asked first for that reason.
+  * **`:squeeze` is tried last**, because interval arithmetic cannot see that two
+    occurrences of `x` are the same number: `sin(x)/x` over `[h/10, h]` encloses to
+    roughly `[0.1, 10]` however small `h` is, and `x·floor(1/x)` declines the same way.
+    Every exact route is asked first for that reason. The enclosures must close at
+    the rate the scales do, so `sqrt(x)·sin(1/x)` — whose limit is `0`, approached
+    too slowly — declines. Its answer is typed by what the route knows: an enclosure
+    of zero width is exact and reports an integer (`floor` from the left is `-1`);
+    one containing zero reports `0.0`, not `-1.0e-14`; anything else is the float
+    midpoint. **A float from this route means bounded, not derived** —
+    `(2/3)(1 - (1/4)^(n+1))` at infinity is `0.6666…` here and `2//3` from the Gruntz
+    engine after the `a^m → e^{m·log a}` rewrite, and the difference is the point.
   * **`log` divergence cannot be delegated.** `SymbolicLimits.limit(log(u), u, 0,
     :right)` returns `0` rather than `-Inf` (v1.1.5). That answer now fails the
     `check` comparison and is discarded, and the numeric increment test supplies
@@ -931,6 +1074,21 @@ See also [`tlim`](@ref), [`lim`](@ref).
 function symlim(ex, v, c; side = :both, cancel = true, check = true, n = 8, secs = 10)
     side in (:both, :left, :right) ||
         throw(ArgumentError("side must be :both, :left or :right; got $(repr(side))"))
+    # `Num <: Number`, so `c isa Number` does not exclude a symbolic limit point, and
+    # `tan(x)` at `Num(pi)/2` died with a `MethodError` from `float(c)` deep inside a
+    # numeric stage. A constant `Num` folds here; a genuinely symbolic point is refused
+    # at the door, where the message can say what was wrong.
+    if !(c isa Real) || c isa Num
+        y = try
+            cn = c isa Num ? c : Symbolics.Num(c)
+            isempty(Symbolics.get_variables(cn)) ? _fold_const(cn, v) : nothing
+        catch
+            nothing
+        end
+        y === nothing &&
+            throw(ArgumentError("the limit point must be a real number or ±Inf; got $(repr(c))"))
+        c = isinteger(y) && abs(y) < 1e15 ? Int(y) : y
+    end
     _symlim(ex, v, c, cancel, check, n, secs, side)
 end
 
@@ -950,8 +1108,13 @@ function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
         if g[1] !== nothing
             return pd(g[1]) ? (nothing, :parameter_dependent) : g
         end
+        # An enclosure can be inflated by the dependency problem — `(2x + sin x)/x - 3`
+        # over `[m, 1e300]` straddles 0 while the function sits at -1 — so the answer
+        # is held to the pointwise samples too, which no enclosure can fool.
         sq = _squeeze(ex, v, c, side)
-        sq === nothing || return (sq, :squeeze)
+        if sq !== nothing && _confirms(ex, v, c, sq, side)
+            return pd(sq) ? (nothing, :parameter_dependent) : (sq, :squeeze)
+        end
         # Last resorts. Composition first, so the reported route names the method
         # that actually settled it: `(1 + 1/n)^n` is the composition rule applied to
         # a rewritten power, and reporting `:reciprocal` for it would describe the
@@ -977,6 +1140,13 @@ function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
         if L !== nothing && R !== nothing &&
            L[1] !== :erratic && R[1] !== :erratic && !_agree(L, R)
             return (nothing, :sides_disagree)
+        end
+        # Reaching `c` from one direction only is a one-sided limit in all but name,
+        # and the routes should be asked for one. `exp(x*log(x))` at 0 was
+        # `:unresolved` two-sided while `side = :right` gave `(1, :gruntz)`: the
+        # engine was being asked about a side on which the function does not exist.
+        if (L === nothing) ⊻ (R === nothing)
+            side = L === nothing ? :right : :left
         end
     elseif (side === :left ? L : R) === nothing
         return (nothing, :undefined_on_side)
@@ -1010,7 +1180,7 @@ function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
             q = Symbolics.simplify_fractions(ex)
             nq, dq = sub(numerator(q)), sub(denominator(q))
             if _usable(dq, v) && !_symzero(dq) && _usable(nq, v) && _numfold(q, v, c) !== nothing
-                val = simplify(nq / dq)
+                val = _maybe_fold(simplify(nq / dq), v)
                 ok(val) && return (val, :cancel)
             end
         catch
@@ -1028,16 +1198,24 @@ function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
     # 4. the Gruntz engine, last and time-boxed. Its answer is checked like any
     #    other — this is what demotes `limit(log(u), u, 0, :right) -> 0` (v1.1.5)
     #    rather than passing it on.
+    #    A free parameter makes each of the three numeric answers below a statement
+    #    about the grounding sample, not the parameter — see `_param_dependent`.
     g = _gruntz(ex, v, c; secs, side)
-    g[1] !== nothing && ok(g[1]) && return g
+    if g[1] !== nothing && ok(g[1])
+        return pd(g[1]) ? (nothing, :parameter_dependent) : g
+    end
 
     # 5. numeric evidence of divergence
     d = _diverges(side, L, R)
-    d === nothing || return (d, :divergent_numeric)
+    d === nothing || return pd(d) ? (nothing, :parameter_dependent) : (d, :divergent_numeric)
 
-    # 6. the squeeze theorem, by rigorous enclosure
+    # 6. the squeeze theorem, by rigorous enclosure — held to the pointwise evidence
+    #    like every other route, since an enclosure can be inflated by the dependency
+    #    problem while the samples cannot
     sq = _squeeze(ex, v, c, side)
-    sq === nothing || return (sq, :squeeze)
+    if sq !== nothing && ok(sq)
+        return pd(sq) ? (nothing, :parameter_dependent) : (sq, :squeeze)
+    end
 
     # 7. the limit of a composition — last, so it only ever rescues an
     #    `:unresolved`. `lim f(h) = f(lim h)` for `f` continuous at the inner limit.

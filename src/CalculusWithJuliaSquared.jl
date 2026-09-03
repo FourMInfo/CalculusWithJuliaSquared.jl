@@ -26,6 +26,8 @@ functions. The constant `e` is assigned to `exp(1)`.
 
 * The `Symbolics` package is loaded (and reexported) giving access to symbolic math (`@variables`, etc.) along with symbolic `gradient`, `divergence`, and `curl` methods -- pure Julia, no Python dependency.
 
+* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations. No `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
+
 * The `Plots` package is loaded (and reexported) providing the plotting interface directly -- no separate `using Plots` needed.
 
 Several plot recipes are provided to ease the creation of plots in the notes.
@@ -52,6 +54,12 @@ import PlotUtils
 import ForwardDiff
 export ForwardDiff
 import Latexify
+
+# Loading Nemo -- import, never `using` -- activates Symbolics' `SymbolicsNemoExt`, so
+# `symbolic_solve` works on polynomial equations for every user of this package with no
+# `using Nemo` of their own. A reexport would drag in Nemo's `derivative`, `coeff`, `roots`
+# and friends, which clash with Symbolics; a bare import brings in nothing.
+import Nemo
 
 using Reexport
 @reexport using Roots
