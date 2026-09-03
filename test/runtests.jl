@@ -185,8 +185,8 @@ end
     #    interval route now establishes rather than declining. Note the guard that
     #    still matters underneath: Symbolics folds 0*sin(1/0) to 0 by the zero-product
     #    rule, so :substitution must not claim this one — the route is what proves it.
-    @test symlim(x * sin(1/x), x, 0) == (0, :squeeze)      # snapped: 0, not 0.0 (v0.10.0)
-    @test symlim(exp(-x) * sin(x), x, Inf) == (0, :squeeze)
+    @test symlim(x * sin(1/x), x, 0) == (0.0, :squeeze)
+    @test symlim(exp(-x) * sin(x), x, Inf) == (0.0, :squeeze)
 
     #    but an enclosure that does not collapse is a refusal, not an answer:
     #    sin(x) at infinity encloses to [-1, 1] at every scale because it has no limit
@@ -268,45 +268,6 @@ end
     @test sval(symlim(abs(x - 2)/(x - 2), x, 2; side = :right)[1]) ==  1
     # symbols for the composition / parameter-dependence tests below
     @variables n::Real d::Real m::Real
-
-    # ---- :composition -- lim f(h) = f(lim h) for f continuous at the inner limit.
-    #      This is what stood between symlim and the 1^inf family.
-    @test symlim((1 + 1/n)^n, n, Inf)[1] ≈ exp(1)
-    @test symlim((1 + 2/n)^n, n, Inf)[1] ≈ exp(2)
-    @test symlim((n/(n+1))^n, n, Inf)[1] ≈ exp(-1)
-    @test symlim((1 + 1/n)^n, n, Inf)[2] === :composition
-
-    #      ADVERSARIAL: the route must be a LAST resort. Everything that resolved
-    #      before must still resolve the SAME WAY -- a route label is a compatibility
-    #      surface the notes quote, so a silent relabel is a break even when the
-    #      value is right.
-    @test symlim(log(x)/x, x, Inf)[2]                        === :gruntz
-    @test symlim(x^7/exp(x), x, Inf)[2]                      === :gruntz
-    @test symlim((x^2 - 2x + 2)/(4x^2 + 3x - 2), x, Inf)[2]  === :reciprocal
-    @test symlim(x^4/x^3, x, Inf)[2]                         === :reciprocal
-    @test symlim(exp(-x) * sin(x), x, Inf)[2]                === :squeeze
-    @test symlim(x * sin(1/x), x, 0)[2]                      === :squeeze
-    @test symlim(sin(x)/x, x, 0)[2]                          === :series
-    @test symlim((x^2 - 1)/(x - 1), x, 1)[2]                 === :cancel
-    #      ...and the refusals must still refuse
-    @test symlim(sin(x), x, Inf)      == (nothing, :unresolved)
-    @test symlim(abs(x)/x, x, 0)      == (nothing, :sides_disagree)
-
-    #      ADVERSARIAL: composition must not reach through a function that is NOT
-    #      continuous at the inner limit. `log` and `sqrt` are deliberately absent
-    #      from the continuous set -- log(x) at 0 must stay divergent-by-evidence,
-    #      not become `log(0)` handed back as a composed answer.
-    @test symlim(log(x), x, 0; side = :right)[2] === :divergent_numeric
-    #      `sqrt` at 0+ is unresolved for reasons predating this route (it resolves
-    #      fine away from the branch point, e.g. at 4). What matters here is that
-    #      composition does not step in and manufacture an answer for it.
-    @test symlim(sqrt(x), x, 0; side = :right)[2] !== :composition
-    @test symlim(sqrt(x), x, 4)[1] == 2
-
-    #      ADVERSARIAL: a composed answer is confirmed against the function itself,
-    #      so an inner limit that is right cannot smuggle out a wrong outer value.
-    @test symlim(exp(1/x), x, Inf)[1] ≈ 1
-    @test symlim(exp(-x^2), x, Inf)[1] == 0
 
     # ---- :parameter_dependent -- refuse rather than answer for an unstated branch.
     #      With `delta` free the engine returns -Inf, correct for delta < 0 and the
@@ -413,7 +374,7 @@ end
     @test symlim(c + x*sin(1/x), x, 0) == (nothing, :parameter_dependent)
     @test symlim(c + x*sin(1/x), x, 0; side = :right)[1] === nothing
     #      ...but it must NOT refuse where the answer holds for every value
-    @test symlim(c*x*sin(1/x), x, 0) == (0, :squeeze)
+    @test symlim(c*x*sin(1/x), x, 0) == (0.0, :squeeze)
     @test symlim(c + 1/x^2, x, 0) == (Inf, :divergent_numeric)
     @test symlim(exp(n*log(1 + d)) - n, n, Inf) == (nothing, :parameter_dependent)
     @test symlim(exp(m*log(x) - x), x, Inf)[1] == 0
@@ -422,17 +383,17 @@ end
     #      which removed the protection exactly where a fabricated number is hardest
     #      to notice. Three parameters, same invented number without it.
     @test symlim(a + b + c + x*sin(1/x), x, 0) == (nothing, :parameter_dependent)
-    @test symlim((a + b + c)*x*sin(1/x), x, 0) == (0, :squeeze)
+    @test symlim((a + b + c)*x*sin(1/x), x, 0) == (0.0, :squeeze)
     #      the collapse test is RELATIVE — the widths must fall by about the factor
     #      the step sizes did — so the coefficient's size is irrelevant. An absolute
     #      bound refused these, and made the three-parameter case above depend on
     #      which sample values the session had already handed out.
-    @test symlim(10x*sin(1/x), x, 0)   == (0, :squeeze)
-    @test symlim(1000x*sin(1/x), x, 0) == (0, :squeeze)
+    @test symlim(10x*sin(1/x), x, 0)   == (0.0, :squeeze)
+    @test symlim(1000x*sin(1/x), x, 0) == (0.0, :squeeze)
     #      ...independent of how many symbols were grounded before it
     @variables p1 p2 p3 p4 p5 p6 a2 b2 c2
     foreach(p -> CW._ground(p, x), (p1, p2, p3, p4, p5, p6))
-    @test symlim((a2 + b2 + c2)*x*sin(1/x), x, 0) == (0, :squeeze)
+    @test symlim((a2 + b2 + c2)*x*sin(1/x), x, 0) == (0.0, :squeeze)
     #      ...and a width that stays put is an oscillation, however tiny: no limit.
     #      An absolute bound accepted this one as (0, :squeeze).
     @test symlim(1e-9*sin(1/x), x, 0)[1] === nothing
@@ -478,29 +439,37 @@ end
     #      the dependency problem is a refusal, not a wrong number: the limit is 1
     @test symlim(x*floor(1/x), x, 0; side = :right)[1] === nothing
 
-    # ---- E. Snapping: the simplest number RIGOROUSLY inside the final enclosure.
-    @test symlim(x^2*(cos(1/x) - 1), x, 0) == (0, :squeeze)          # was -1.0e-14
-    @test symlim(x*sin(1/x), x, 0) == (0, :squeeze)
-    @test !(symlim(x*sin(1/x), x, 0)[1] isa AbstractFloat)
-    @test symlim(x*sin(1/x), x, 0; side = :right) == (0, :squeeze)
-    @test symlim(exp(-x)*sin(x), x, Inf) == (0, :squeeze)
-    @test symlim(1//4 + x*sin(1/x), x, 0) == (1//4, :squeeze)
-    #      conservative: an irrational limit stays a float rather than a fraction
+    # ---- E. What a collapsed enclosure may claim: the number's TYPE reports how the
+    #      answer was established. Zero width is exact; containing 0 is a clean 0.0;
+    #      anything else is a float, because a float is all a bound knows.
+    @test symlim(x^2*(cos(1/x) - 1), x, 0) == (0.0, :squeeze)        # was -1.0e-14: debris
+    @test symlim(x^2*(cos(1/x) - 1), x, 0)[1] === 0.0
+    @test symlim(x*sin(1/x), x, 0)[1] === 0.0                         # exactly as published
+    @test symlim(x*sin(1/x), x, 0; side = :right)[1] === 0.0
+    @test symlim(exp(-x)*sin(x), x, Inf)[1] === 0.0
+    #      bounded, NOT derived: a limit the route only encloses stays a float, so a
+    #      reader can tell it from an exact answer. `1//4` here would print a bound
+    #      exactly like a derivation.
+    r = symlim(1//4 + x*sin(1/x), x, 0)
+    @test r[2] === :squeeze && r[1] isa AbstractFloat && r[1] ≈ 0.25
     r = symlim(sqrt(2) + x*sin(1/x), x, 0)
     @test r[2] === :squeeze && r[1] isa AbstractFloat && r[1] ≈ sqrt(2)
-    #      _snap itself: inside the box, small denominator, or not at all
+    #      exact because the enclosure IS exact: a step function over a box that
+    #      excludes the step has zero width
+    @test symlim(floor(x), x, 0; side = :left)[1]  === -1
+    @test symlim(sign(x),  x, 0; side = :right)[1] === 1
+    #      _snap itself
     S = CW._snap
-    @test S(-2e-14, 0.0)             == 0
-    @test S(0.0, 0.0)                == 0
-    @test S(0.9999995, 1.0000005)    == 1      && S(0.9999995, 1.0000005) isa Integer
-    @test S(-1.0, -1.0)              == -1     && S(-1.0, -1.0) isa Integer
-    @test S(0.2499999, 0.2500001)    == 1//4
-    @test S(-0.2500001, -0.2499999)  == -1//4
-    @test S(0.3333333, 0.3333334)    == 1//3
-    @test S(1.4142135, 1.4142136)    isa AbstractFloat
-    @test S(1e300, 1e300)            isa AbstractFloat   # rationalize would overflow
-    #      the snapped value must lie inside the enclosure it was read from
-    @test 0.2499999 <= S(0.2499999, 0.2500001) <= 0.2500001
+    @test S(-2e-14, 0.0)            === 0.0
+    @test S(-1e-7, 1e-7)            === 0.0
+    @test S(0.0, 0.0)               === 0                # zero width, integer: exact
+    @test S(-1.0, -1.0)             === -1
+    @test S(-0.5, -0.5)             === -0.5             # zero width, not an integer: as is
+    @test S(1e300, 1e300)           isa AbstractFloat    # too large for an Int
+    @test S(0.9999998, 1.0000002)   isa AbstractFloat    # near 1 is not 1: bounded
+    @test S(0.5, 0.6)               === nothing          # a band is not a point
+    @test S(0.2499999, 0.2500001)   isa AbstractFloat
+    @test S(0.2499999, 0.2500001)   ≈ 0.25
 
     # ---- F. Limit points and one-sided domains.
     @test symlim(tan(x), x, Num(pi)/2) == (nothing, :sides_disagree)       # was a MethodError
@@ -521,16 +490,92 @@ end
     @test symlim(log(x), x, 0; side = :left) == (nothing, :undefined_on_side)
     @test symlim(1/x, x, 0) == (nothing, :sides_disagree)                   # both sides exist
 
+    #      ADVERSARIAL: a probe the guard cannot settle is NOT evidence of
+    #      independence. With `secs = 0` every Gruntz call times out, so both probes
+    #      are unsettled — and a numeric answer must then be refused, not waved
+    #      through. This is what CI hit: abandoned hung Gruntz tasks from the 1^∞
+    #      cases held the thread pool, the probe's call timed out, and the guard
+    #      passed (-Inf, :gruntz) on as if it had checked.
+    @test CW._param_dependent(exp(n*log(1 + d)) - n, n, Inf, -Inf, true, true, 8, 0, :both)
+    @test symlim(exp(n*log(1 + d)) - n, n, Inf; secs = 0)[1] === nothing
+    #      ...while a SYMBOLIC answer that shows its parameter is still let through
+    #      when a probe is unsettled — the reader can judge it, a number cannot be
+    @test !CW._param_dependent(a*x^2 + c, x, 0, c, true, true, 8, 0, :both)
+    @test isequal(sval(symlim(a*x^2 + c, x, 0; secs = 0)[1]), sval(c))
+
+    #      ADVERSARIAL: an enclosure can be INFLATED by the dependency problem and
+    #      still pass a closing test — `(2x + sin x)/x - 3` over `[m, 1e300]` straddles
+    #      0 while the function sits at -1 — so :squeeze is held to pointwise samples
+    #      like every other route. Reaching the route needs the engine to decline,
+    #      which `sin` guarantees.
+    @test symlim((2x + sin(x))/x - 3, x, Inf)[1] != 0
+    @test symlim((2x + sin(x))/x - 3, x, Inf)[2] !== :squeeze
+    #      and a band that closes at the scale rate but never gets tight is refused:
+    #      `log(x)/x` over `[m, 1e300]` shrinks like 1/m and would report half a band
+    @test CW._squeeze(log(x)/x, x, Inf, :both) === nothing
+
     # ---- Every docstring example, pinned by route.
     @test symlim((x^2 - 1)/(x - 1), x, 1)          == (2, :cancel)
     @test symlim(sin(x)/x, x, 0)                   == (1//1, :series)
     @test symlim(log(x)/x, x, Inf)                 == (0, :gruntz)
-    @test symlim(x*sin(1/x), x, 0)                 == (0, :squeeze)
+    @test symlim(x*sin(1/x), x, 0)                 == (0.0, :squeeze)
     @test symlim(abs(x)/x, x, 0)                   == (nothing, :sides_disagree)
     @test symlim(abs(x)/x, x, 0; side = :right)    == (1//1, :series)
     @test symlim(abs(x)/x, x, 0; side = :left)     == (-1//1, :series)
     @test symlim(floor(x), x, 0; side = :right)    == (0, :substitution)
     @test symlim(floor(x), x, 0; side = :left)     == (-1, :squeeze)
+
+end
+
+@testset "symbolic limits: the 1^∞ family — LAST, because a hung Gruntz call is a lost thread" begin
+
+    # `SymbolicLimits` does not terminate on `exp(n*log(1 + 1/n))` — measured at
+    # >150 s, and a second call is no better, so it is not compilation. The watchdog
+    # abandons the task but cannot kill a CPU-bound one, so every case below costs the
+    # session a thread for good. Anything Gruntz-dependent that runs AFTER them is at
+    # the mercy of the scheduler: locally it kept passing, on CI it did not. Hence this
+    # block runs last, and its own label assertions come before its hangs.
+    @variables x::Real n::Real
+
+    #      ADVERSARIAL: the route must be a LAST resort. Everything that resolved
+    #      before must still resolve the SAME WAY -- a route label is a compatibility
+    #      surface the notes quote, so a silent relabel is a break even when the
+    #      value is right. Asserted BEFORE the hangs, so a poisoned pool cannot
+    #      relabel them here either.
+    @test symlim(log(x)/x, x, Inf)[2]                        === :gruntz
+    @test symlim(x^7/exp(x), x, Inf)[2]                      === :gruntz
+    @test symlim((x^2 - 2x + 2)/(4x^2 + 3x - 2), x, Inf)[2]  === :reciprocal
+    @test symlim(x^4/x^3, x, Inf)[2]                         === :reciprocal
+    @test symlim(exp(-x) * sin(x), x, Inf)[2]                === :squeeze
+    @test symlim(x * sin(1/x), x, 0)[2]                      === :squeeze
+    @test symlim(sin(x)/x, x, 0)[2]                          === :series
+    @test symlim((x^2 - 1)/(x - 1), x, 1)[2]                 === :cancel
+    #      ...and the refusals must still refuse
+    @test symlim(sin(x), x, Inf)      == (nothing, :unresolved)
+    @test symlim(abs(x)/x, x, 0)      == (nothing, :sides_disagree)
+    #      a composed answer is confirmed against the function itself, so an inner
+    #      limit that is right cannot smuggle out a wrong outer value
+    @test symlim(exp(1/x), x, Inf)[1] ≈ 1
+    @test symlim(exp(-x^2), x, Inf)[1] == 0
+
+    # ---- :composition -- lim f(h) = f(lim h) for f continuous at the inner limit.
+    #      This is what stood between symlim and the 1^inf family. Each of these
+    #      abandons at least one hung Gruntz task.
+    @test symlim((1 + 1/n)^n, n, Inf)[1] ≈ exp(1)
+    @test symlim((1 + 2/n)^n, n, Inf)[1] ≈ exp(2)
+    @test symlim((n/(n+1))^n, n, Inf)[1] ≈ exp(-1)
+    @test symlim((1 + 1/n)^n, n, Inf)[2] === :composition
+
+    #      ADVERSARIAL: composition must not reach through a function that is NOT
+    #      continuous at the inner limit. `log` and `sqrt` are deliberately absent
+    #      from the continuous set -- log(x) at 0 must stay divergent-by-evidence,
+    #      not become `log(0)` handed back as a composed answer. None of these needs
+    #      the engine, so they are safe after the hangs.
+    @test symlim(log(x), x, 0; side = :right)[2] === :divergent_numeric
+    #      `sqrt` at 0+ resolves by substitution; what matters here is that
+    #      composition does not step in and manufacture an answer for it.
+    @test symlim(sqrt(x), x, 0; side = :right)[2] !== :composition
+    @test symlim(sqrt(x), x, 4)[1] == 2
 
 end
 

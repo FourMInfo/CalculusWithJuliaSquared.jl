@@ -405,6 +405,15 @@ end
 # Run `f()` on a worker thread, giving up after `secs`. A hung `SymbolicLimits`
 # call is CPU-bound and never yields, so a same-thread watchdog would starve —
 # this needs Julia started with `-t 2` or more to be effective.
+#
+# Giving up does not stop the call: a CPU-bound task cannot be interrupted, so it
+# keeps its thread until it finishes, if ever. Enough abandoned calls and the pool is
+# full, and every later call waits out `secs` for a thread it may never get. Declining
+# early while the pool is saturated was tried and rejected: it made `log(x)/x` at
+# infinity route through `:squeeze` because *earlier* calls had hung, and a route's
+# answer must not depend on the session's history. The guard in `_param_dependent`
+# treats a probe that times out as unsettled, which is the correctness half; the
+# latency half is the cost of a watchdog that cannot kill.
 function _timed(f, secs)
     t = Threads.@spawn try f() catch; nothing end
     for _ in 1:round(Int, secs * 20)
@@ -736,19 +745,33 @@ function _param_dependent(ex, v, c, val, cancel, check, n, secs, side)
     ps = [p for p in Symbolics.get_variables(ex)
           if !isequal(p, Symbolics.unwrap(v))]
     isempty(ps) && return false
+    # A probe that cannot be settled is not evidence of independence. For a SYMBOLIC
+    # answer that is tolerable — it still shows the parameter, and a reader can judge
+    # it. For a NUMBER it is not: nothing marks which branch the number belongs to, so
+    # an unsettled probe has to count as dependence. Before this, a probe whose Gruntz
+    # call timed out — on CI, where abandoned hung calls from earlier `1^∞` cases had
+    # the thread pool and the watchdog gave up — was skipped as "no opinion", and
+    # `exp(n·log(1+d)) - n` came back `(-Inf, :gruntz)` after all.
+    numeric = _uw(val) isa Number
     for probe in (1//2, -1//2)
         d = Dict(p => probe for p in ps)
         specialised = try
             s, r = _symlim(substitute(ex, d), v, c, cancel, check, n, secs, side)
-            (s === nothing || r === :unresolved) && continue
-            _uw(s)
+            (s === nothing || r === :unresolved) ? nothing : _uw(s)
         catch
+            nothing
+        end
+        if specialised === nothing
+            numeric && return true
             continue
         end
-        general = try _uw(substitute(val, d)) catch; continue end
-        (specialised isa Number && general isa Number) || continue
-        a = try float(specialised) catch; continue end
-        b = try float(general)     catch; continue end
+        general = try _uw(substitute(val, d)) catch; nothing end
+        if general === nothing || !(specialised isa Number && general isa Number)
+            numeric && return true
+            continue
+        end
+        a = try float(specialised) catch; numeric && return true; continue end
+        b = try float(general)     catch; numeric && return true; continue end
         if isnan(a) || isnan(b) ||
            (isinf(a) || isinf(b) ? a != b : abs(a - b) > 1e-3 * max(1, abs(a), abs(b)))
             return true
@@ -774,10 +797,11 @@ end
 # while over `[-h, 0]` it was `[-1, 0]` and never collapsed. It is also monotone:
 # the annulus sits inside the old box, so nothing that collapsed before stops.
 #
-# The answer is the simplest number that lies rigorously inside the final enclosure
-# (`_snap`): `0` when the box contains it, a rational with a small denominator when
-# one fits, otherwise the float. Reporting the midpoint gave `-1.0e-14` for
-# `x^2*(cos(1/x) - 1)` at 0, which is arithmetic debris, not a limit.
+# The answer's TYPE reports how it was established (`_snap`): exact when the enclosure
+# has zero width, `0.0` when it contains zero, otherwise the float midpoint. Reporting
+# the raw midpoint gave `-1.0e-14` for `x^2*(cos(1/x) - 1)` at 0, which is arithmetic
+# debris, not a limit; snapping further, to the simplest rational inside the box,
+# would print a bound exactly like a derivation.
 #
 # `build_function` emits `NaNMath` calls by default and NaNMath has no interval
 # methods, so `nanmath = false` is required, not cosmetic.
@@ -794,16 +818,25 @@ end
 # `x` are the same number (the dependency problem). `x*floor(1/x)` declines for the
 # same reason. That ordering is a starting position rather than a considered design —
 # see the workplan note in the notes repo before changing it on one example.
+# What a collapsed enclosure is allowed to claim. The number's TYPE reports how the
+# answer was established: an enclosure of zero width is exact — `floor` over
+# `[-h, -h/10]` is precisely `[-1, -1]` — and reports the integer; one that contains 0
+# reports `0.0`, the clean zero this package prefers to `-1.0e-14`, still typed as the
+# bound it is; anything else is the midpoint, a float, because a float is all a bound
+# knows. Snapping `[0.66666, 0.66667]` to `2//3` was tried and rejected: it prints a
+# bound exactly like a derivation, and the notes lean on being able to tell them apart.
 function _snap(lo, hi)
-    lo <= 0 <= hi && return 0
-    mid = (lo + hi) / 2
-    r = try
-        rationalize(Int, mid; tol = (hi - lo) / 2 + 4eps(mid))
-    catch
-        return mid
+    if lo == hi
+        return (isinteger(lo) && abs(lo) < 1e15) ? Int(lo) : lo
     end
-    (lo <= r <= hi && denominator(r) <= 100) || return mid
-    denominator(r) == 1 ? numerator(r) : r
+    lo <= 0 <= hi && return 0.0
+    # A band that closes at the scale rate but never gets tight is not a point. The
+    # dependency problem makes `log(x)/x` over `[m, 1e300]` enclose to `[~0, 690/m]`,
+    # which shrinks like `1/m` and passes the relative test while still `7e-5` wide at
+    # the last scale; the midpoint of that is not a limit, it is half a band.
+    mid = (lo + hi) / 2
+    (hi - lo) < 1e-6 * max(1, abs(mid)) || return nothing
+    mid
 end
 
 function _squeeze(ex, v, c, side; hs = (1e-1, 1e-3, 1e-5, 1e-7))
@@ -855,7 +888,6 @@ function _squeeze(ex, v, c, side; hs = (1e-1, 1e-3, 1e-5, 1e-7))
     # declines; at four scales there is no telling it from an oscillation.
     closing = wids[1] == 0 ? wids[end] == 0 : wids[end] <= 3e-6 * wids[1]
     closing                                      || return nothing
-    wids[end] < 1e-3 * max(1, abs(mid))          || return nothing
     _snap(los[end], his[end])
 end
 
@@ -899,7 +931,7 @@ rather than a guess.
 | `:reciprocal` | `c` is infinite and `ex` is a ratio of polynomials | yes |
 | `:gruntz` | `c` is infinite, or nothing above applied | float |
 | `:divergent_numeric` | the value grows without bound | `±Inf` |
-| `:squeeze` | interval enclosures, `c` excluded, collapse to a point | simplest number inside them |
+| `:squeeze` | interval enclosures, `c` excluded, collapse to a point | only when the enclosure has zero width; else float |
 | `:composition` | `lim f(h) = f(lim h)` for `f` continuous at the inner limit | inherits |
 | `:sides_disagree` | left and right limits both exist and differ | — |
 | `:undefined_on_side` | a `side` was asked for that `ex` does not reach | — |
@@ -919,7 +951,7 @@ julia> symlim(log(x)/x, x, Inf)
 (0, :gruntz)
 
 julia> symlim(x * sin(1/x), x, 0)
-(0, :squeeze)
+(0.0, :squeeze)
 
 julia> symlim(abs(x)/x, x, 0)
 (nothing, :sides_disagree)
@@ -1017,9 +1049,12 @@ only for the work it was built for.
     roughly `[0.1, 10]` however small `h` is, and `x·floor(1/x)` declines the same way.
     Every exact route is asked first for that reason. The enclosures must close at
     the rate the scales do, so `sqrt(x)·sin(1/x)` — whose limit is `0`, approached
-    too slowly — declines. Its answer is the simplest number lying rigorously inside
-    the final enclosure — `0`, a rational with a small denominator, otherwise the
-    float — so `x·sin(1/x)` reports `0`, not `-1.0e-14`.
+    too slowly — declines. Its answer is typed by what the route knows: an enclosure
+    of zero width is exact and reports an integer (`floor` from the left is `-1`);
+    one containing zero reports `0.0`, not `-1.0e-14`; anything else is the float
+    midpoint. **A float from this route means bounded, not derived** —
+    `(2/3)(1 - (1/4)^(n+1))` at infinity is `0.6666…` here and `2//3` from the Gruntz
+    engine after the `a^m → e^{m·log a}` rewrite, and the difference is the point.
   * **`log` divergence cannot be delegated.** `SymbolicLimits.limit(log(u), u, 0,
     :right)` returns `0` rather than `-Inf` (v1.1.5). That answer now fails the
     `check` comparison and is discarded, and the numeric increment test supplies
@@ -1073,8 +1108,13 @@ function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
         if g[1] !== nothing
             return pd(g[1]) ? (nothing, :parameter_dependent) : g
         end
+        # An enclosure can be inflated by the dependency problem — `(2x + sin x)/x - 3`
+        # over `[m, 1e300]` straddles 0 while the function sits at -1 — so the answer
+        # is held to the pointwise samples too, which no enclosure can fool.
         sq = _squeeze(ex, v, c, side)
-        sq === nothing || return pd(sq) ? (nothing, :parameter_dependent) : (sq, :squeeze)
+        if sq !== nothing && _confirms(ex, v, c, sq, side)
+            return pd(sq) ? (nothing, :parameter_dependent) : (sq, :squeeze)
+        end
         # Last resorts. Composition first, so the reported route names the method
         # that actually settled it: `(1 + 1/n)^n` is the composition rule applied to
         # a rewritten power, and reporting `:reciprocal` for it would describe the
@@ -1169,9 +1209,13 @@ function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)
     d = _diverges(side, L, R)
     d === nothing || return pd(d) ? (nothing, :parameter_dependent) : (d, :divergent_numeric)
 
-    # 6. the squeeze theorem, by rigorous enclosure
+    # 6. the squeeze theorem, by rigorous enclosure — held to the pointwise evidence
+    #    like every other route, since an enclosure can be inflated by the dependency
+    #    problem while the samples cannot
     sq = _squeeze(ex, v, c, side)
-    sq === nothing || return pd(sq) ? (nothing, :parameter_dependent) : (sq, :squeeze)
+    if sq !== nothing && ok(sq)
+        return pd(sq) ? (nothing, :parameter_dependent) : (sq, :squeeze)
+    end
 
     # 7. the limit of a composition — last, so it only ever rescues an
     #    `:unresolved`. `lim f(h) = f(lim h)` for `f` continuous at the inner limit.
