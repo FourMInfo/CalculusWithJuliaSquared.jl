@@ -45,6 +45,48 @@ The `plot_implicit` function can plot `2D` implicit plots. (It is borrowed from 
 
 * `QuadGK` and `HCubature` are used for numeric integration
 
+## Cautions for anyone else using this package
+
+This is a personal study fork, not a registered package: you have to go out of your way to
+install it, and nobody maintains it for you. Several of its conveniences change `Julia`'s
+behaviour *globally* for the whole session, not only for calls into this package. They are
+collected here so that nobody has to discover them by debugging.
+
+**Type piracy.** [Type piracy](https://docs.julialang.org/en/v1/manual/style-guide/index.html#Avoid-type-piracy-1)
+means adding a method to a function you do not own, dispatching on a type you do not own.
+Julia's method tables are global, so such a method is visible to every package in the
+session. This one commits it three times, each deliberately:
+
+* `f'` on a function returns its derivative, dispatching `Base.adjoint` (inherited from
+  upstream `CalculusWithJulia`).
+
+* `show` for a `Symbolics.Num`, and for the vector of solutions that `symbolic_solve`
+  returns, emits display math so expressions typeset in Quarto, Documenter and Jupyter
+  rather than printing their internal type names.
+
+* `find_zero`, `find_zeros` and the `ZeroProblem` interface accept a symbolic expression
+  or a `~` equation, mirroring the `SymPy` extension that `Roots` already ships. Should
+  `Roots` ever add its own `Symbolics` support, expect a method-overwrite warning on load;
+  the fix is to delete ours.
+
+All three are the benign kind -- each replaces an error with an answer, so no working code
+changes behaviour -- but they are piracy nonetheless, and the manual's own carve-out for
+coupled packages that "separate features from definitions" is the ground they stand on.
+
+**Loading this package changes what `Symbolics` can do.** `Nemo` is imported (never
+`using`), which switches on `Symbolics.symbolic_solve` for polynomial equations. Code that
+fails without this package will succeed with it.
+
+**A lot of names arrive at once.** `Roots`, `LinearAlgebra`, `SpecialFunctions`,
+`IntervalSets`, `Symbolics` and `Plots` are reexported, `ForwardDiff` is exported, and `e`
+is exported as `exp(1)`. Clashes are real rather than theoretical: alongside SciML's
+`BracketingNonlinearSolve`, both `Bisection` and `solve` become ambiguous and have to be
+qualified.
+
+**The plotting backend is configured on load.** `__init__` selects `GR` and forces headless
+mode whenever `Julia` is non-interactive, so that document renders embed figures instead of
+trying to open a window.
+
 """
 module CalculusWithJuliaSquared
 
@@ -88,6 +130,25 @@ Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
 Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
     print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
           Latexify.latexify(x; env=:raw), " \\]</span>")
+
+# `symbolic_solve` returns a `Vector` of raw `BasicSymbolic`, which otherwise prints with
+# its full type name -- `Vector{SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"
+# {SymReal}}` -- ahead of the roots. Typeset the solution set as display math instead, the
+# same way the scalar methods above do, which also matches how SymPy showed a solution set.
+#
+# Deliberately NOT extended to `AbstractVector{<:Symbolics.Num}`. Measured 2026-09-04: the
+# only two published cells rendering a `Vector{Num}` are the echoed return of `@variables`,
+# so widening would typeset a variable declaration -- dressing a macro's return value up as
+# mathematics. `gradient`/`divergence`/`curl` do return one and would genuinely benefit, but
+# they live in the vector-calculus groups, which are not ported and not yet in the port
+# order. Decide it there, against a real rendered gradient. See `_research/CHAPTER_MAP.md`.
+const _SymbolicSolutions = AbstractVector{<:Symbolics.SymbolicUtils.BasicSymbolic}
+
+Base.show(io::IO, ::MIME"text/latex", xs::_SymbolicSolutions) =
+    print(io, "\\[ ", Latexify.latexify(xs; env=:raw), " \\]")
+Base.show(io::IO, ::MIME"text/html", xs::_SymbolicSolutions) =
+    print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
+          Latexify.latexify(xs; env=:raw), " \\]</span>")
 
 # auto-configure plotting for headless vs interactive use
 # (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
