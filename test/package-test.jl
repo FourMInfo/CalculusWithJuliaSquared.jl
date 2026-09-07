@@ -43,3 +43,25 @@ end
     @test fubini((x,y) -> 1, (x->-sqrt(1-x^2), x->sqrt(1-x^2)), (-1,1)) ≈ pi
 
 end
+
+@testset "reexports: the house-standard packages arrive with this one (v0.12.0)" begin
+
+    M = @__MODULE__
+
+    # `LaTeXStrings` is carried here because it is house standard across the sibling study
+    # repos, and because `Plots` does NOT pass it through -- that is the whole reason
+    # `Calculus` used to name it beside this package.
+    @test isdefined(M, Symbol("@L_str"))
+    @test isdefined(M, :LaTeXString)
+    @test L"x^2" isa LaTeXString                     # the macro actually works, not just bound
+    @test Symbol("@L_str") ∉ names(Plots)            # the negative that motivates carrying it
+
+    # the rest of the reexport surface, pinned so a dropped `@reexport` is caught
+    for s in (:plot, :find_zero, :find_zeros, :norm, :erfc, :airyai, :ClosedInterval)
+        @test isdefined(M, s)
+    end
+    @test isdefined(M, :Num)                          # Symbolics
+    @test isdefined(M, :ForwardDiff)                  # exported, not reexported
+    @test e == exp(1)
+
+end

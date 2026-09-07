@@ -30,6 +30,8 @@ functions. The constant `e` is assigned to `exp(1)`.
 
 * The `Plots` package is loaded (and reexported) providing the plotting interface directly -- no separate `using Plots` needed.
 
+* The `LaTeXStrings` package is loaded (and reexported), so `L"..."` works with no separate `using`. `Plots` does *not* pass this through. It is carried here because it is house standard across the sibling study repos, which means a downstream package or notebook environment need not name it alongside this one.
+
 Several plot recipes are provided to ease the creation of plots in the notes.
 `plotif`, `trimplot`, and `signchart` are used for plotting univariate functions;
 `plot_polar` and `plot_parametric` are used to plot curves in 2 or 3 dimensions;
@@ -78,8 +80,8 @@ coupled packages that "separate features from definitions" is the ground they st
 fails without this package will succeed with it.
 
 **A lot of names arrive at once.** `Roots`, `LinearAlgebra`, `SpecialFunctions`,
-`IntervalSets`, `Symbolics` and `Plots` are reexported, `ForwardDiff` is exported, and `e`
-is exported as `exp(1)`. Clashes are real rather than theoretical: alongside SciML's
+`IntervalSets`, `Symbolics`, `Plots` and `LaTeXStrings` are reexported, `ForwardDiff` is
+exported, and `e` is exported as `exp(1)`. Clashes are real rather than theoretical: alongside SciML's
 `BracketingNonlinearSolve`, both `Bisection` and `solve` become ambiguous and have to be
 qualified.
 
@@ -110,6 +112,13 @@ using Reexport
 @reexport using IntervalSets
 @reexport using Symbolics
 @reexport using Plots
+# House standard across the sibling study repos: `Math_Foundations` and `Linear_Algebra`
+# both carry `LaTeXStrings` at top level, and `Calculus` had to name it *beside* this
+# package (`@reexport using CalculusWithJuliaSquared, LaTeXStrings`) precisely because we
+# did not. `Plots` does NOT pass it through -- `@L_str` is not among its exported names --
+# so every consumer was adding it separately. Carrying it here is what makes this package
+# the single house foundation it is meant to be for the calculus repos.
+@reexport using LaTeXStrings
 
 import SplitApplyCombine
 
