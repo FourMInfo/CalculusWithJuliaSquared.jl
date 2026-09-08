@@ -12,6 +12,11 @@ are `unzip`, `rangeclamp` `tangent`, `secant`, `D` (and the prime
 notation), `divergence`, `gradient`, `curl`, and `∇`, along with some plotting
 functions. The constant `e` is assigned to `exp(1)`.
 
+* It supplies the exact symbolic algebra that `Symbolics` core does not: `exact_trig_values`
+(the special-angle table, so `cos(π/6)` becomes `√3/2` instead of staying unevaluated),
+`factored_poly` and `poly_factors` (factoring over the rationals), and `partial_fractions`.
+These stand in for `SymPy`'s automatic special angles, `factor` and `apart`.
+
 
 ## Packages loaded by `CalculusWithJuliaSquared`
 
@@ -26,7 +31,7 @@ functions. The constant `e` is assigned to `exp(1)`.
 
 * The `Symbolics` package is loaded (and reexported) giving access to symbolic math (`@variables`, etc.) along with symbolic `gradient`, `divergence`, and `curl` methods -- pure Julia, no Python dependency.
 
-* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations. No `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
+* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations, and also backs `factored_poly`, `poly_factors` and `partial_fractions`. No `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
 
 * The `Plots` package is loaded (and reexported) providing the plotting interface directly -- no separate `using Plots` needed.
 
@@ -129,6 +134,7 @@ include("integration.jl")
 include("plot-utils.jl")
 include("plots.jl")
 include("symbolics.jl")
+include("symbolic-algebra.jl")
 
 # Typeset symbolic expressions as display math in HTML/LaTeX frontends (Quarto, Jupyter,
 # Documenter), parallel to SymPy's built-in text/latex show. Latexify's default text/latex
@@ -185,5 +191,6 @@ export lim, symlim, tlim
 export tangent, secant, D, sign_chart, SignChart
 export riemann, fubini
 export divergence, gradient, curl, ∇, uvec
+export exact_trig_values, factored_poly, poly_factors, partial_fractions
 
 end # module
