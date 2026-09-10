@@ -15,7 +15,10 @@ functions. The constant `e` is assigned to `exp(1)`.
 * It supplies the exact symbolic algebra that `Symbolics` core does not: `exact_trig_values`
 (the special-angle table, so `cos(π/6)` becomes `√3/2` instead of staying unevaluated),
 `factored_poly` and `poly_factors` (factoring over the rationals), and `partial_fractions`.
-These stand in for `SymPy`'s automatic special angles, `factor` and `apart`.
+These stand in for `SymPy`'s automatic special angles, `factor` and `apart`. Alongside them,
+`numeric_roots` and `root_enclosures` find roots exactly and report them as floats or as
+certified intervals, standing in for `N.(solve(...))` and `sympy.real_roots`; and `divrem`
+divides one polynomial by another.
 
 
 ## Packages loaded by `CalculusWithJuliaSquared`
@@ -31,7 +34,7 @@ These stand in for `SymPy`'s automatic special angles, `factor` and `apart`.
 
 * The `Symbolics` package is loaded (and reexported) giving access to symbolic math (`@variables`, etc.) along with symbolic `gradient`, `divergence`, and `curl` methods -- pure Julia, no Python dependency.
 
-* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations, and also backs `factored_poly`, `poly_factors` and `partial_fractions`. No `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
+* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations, and also backs `factored_poly`, `poly_factors` and `partial_fractions`. The module name itself IS exported, so `Nemo.overlaps`, `Nemo.midpoint` and `Nemo.radius` are available for the balls `root_enclosures` returns; but no `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
 
 * The `Plots` package is loaded (and reexported) providing the plotting interface directly -- no separate `using Plots` needed.
 
@@ -59,34 +62,79 @@ install it, and nobody maintains it for you. Several of its conveniences change 
 behaviour *globally* for the whole session, not only for calls into this package. They are
 collected here so that nobody has to discover them by debugging.
 
-**Type piracy.** [Type piracy](https://docs.julialang.org/en/v1/manual/style-guide/index.html#Avoid-type-piracy-1)
+### Type piracy: what this package does, and the rule it follows
+
+[Type piracy](https://docs.julialang.org/en/v1/manual/style-guide/index.html#Avoid-type-piracy-1)
 means adding a method to a function you do not own, dispatching on a type you do not own.
-Julia's method tables are global, so such a method is visible to every package in the
-session. This one commits it three times, each deliberately:
+It matters because Julia's method tables are **global**: such a method is visible to every
+package in the session, not only to code that calls into this one. Loading this package can
+therefore change how *unrelated* code behaves, which is why the practice is discouraged.
 
-* `f'` on a function returns its derivative, dispatching `Base.adjoint` (inherited from
-  upstream `CalculusWithJulia`).
+This package commits it four times, each deliberately, and each passing the same test:
 
-* `show` for a `Symbolics.Num`, and for the vector of solutions that `symbolic_solve`
-  returns, emits display math so expressions typeset in Quarto, Documenter and Jupyter
-  rather than printing their internal type names.
+> **The benign test.** Every call the pirated method answers is a call that would otherwise
+> have **thrown** — a `MethodError`, or an outright error. No working code changes its
+> behaviour; code that used to fail now succeeds. The manual's own carve-out for tightly
+> coupled packages that "separate features from definitions" is the ground these stand on.
 
-* `find_zero`, `find_zeros` and the `ZeroProblem` interface accept a symbolic expression
-  or a `~` equation, mirroring the `SymPy` extension that `Roots` already ships. Should
-  `Roots` ever add its own `Symbolics` support, expect a method-overwrite warning on load;
-  the fix is to delete ours.
+A piracy that changed the *result* of a call that already worked would not pass that test,
+and none of the four below does.
 
-All three are the benign kind -- each replaces an error with an answer, so no working code
-changes behaviour -- but they are piracy nonetheless, and the manual's own carve-out for
-coupled packages that "separate features from definitions" is the ground they stand on.
+| method | what it adds | without it |
+|:--|:--|:--|
+| `Base.adjoint` on a function | `f'` returns the derivative (inherited from upstream `CalculusWithJulia`) | `MethodError` |
+| `Base.show` for `Symbolics.Num`, and for the vector `symbolic_solve` returns | display math, so expressions typeset in Quarto, Documenter and Jupyter instead of printing internal type names | prints the type, not the mathematics |
+| `Roots.find_zero`, `find_zeros`, `ZeroProblem` on a symbolic expression or `~` equation | solving `find_zero(x^3 - x + 1, (-2, -1))` directly, mirroring the `SymPy` extension `Roots` already ships | `MethodError` |
+| `Base.divrem` on two `Symbolics.Num`s | Euclidean division of polynomials, `a = b*q + r` with `deg r < deg b` | `MethodError` |
 
-**Loading this package changes what `Symbolics` can do.** `Nemo` is imported (never
-`using`), which switches on `Symbolics.symbolic_solve` for polynomial equations. Code that
-fails without this package will succeed with it.
+Two of these are worth a further word:
 
-**A lot of names arrive at once.** `Roots`, `LinearAlgebra`, `SpecialFunctions`,
-`IntervalSets`, `Symbolics`, `Plots` and `LaTeXStrings` are reexported, `ForwardDiff` is
-exported, and `e` is exported as `exp(1)`. Clashes are real rather than theoretical: alongside SciML's
+  * **`divrem` is named, not renamed.** A `poly_divrem` of our own would have avoided the
+    piracy entirely. It is not used because the point being taught is that Julia's *generic*
+    `divrem` divides polynomials exactly as it divides integers; a bespoke name would state
+    the opposite.
+
+  * **`find_zero` may one day collide.** Should `Roots` add its own `Symbolics` support,
+    expect a **method-overwrite warning on load**. That is not a bug to work around: the fix
+    is to delete our block, because upstream's version supersedes it. The same applies to any
+    of the four if the owning package adopts the method itself.
+
+### `Nemo` is imported, and only its *name* is exported
+
+`Nemo` does two jobs here: it switches on `Symbolics.symbolic_solve` for polynomial
+equations (via Symbolics' `SymbolicsNemoExt`), and it backs `factored_poly`, `poly_factors`,
+`partial_fractions`, `numeric_roots`, `root_enclosures` and `divrem`. **So loading this
+package changes what `Symbolics` itself can do** — code that fails without it will succeed
+with it.
+
+How it is loaded is a deliberate middle course, and knowing which one you are in explains
+every "why must I qualify this?" question:
+
+| | what your code sees | `Nemo.overlaps(a, b)` |
+|:--|:--|:--|
+| `import Nemo` alone | nothing | `UndefVarError` |
+| **`import Nemo` + `export Nemo`** ← this package | the module binding, and nothing else | works |
+| `@reexport using Nemo` | all ~1200 of Nemo's names | works, at a price |
+
+The module **name** is exported, exactly as `ForwardDiff`'s is, so you can call
+`Nemo.overlaps`, `Nemo.midpoint`, `Nemo.radius` and `Nemo.contains` on the balls
+[`root_enclosures`](@ref) returns without adding `Nemo` to your own project. No `using Nemo`
+is needed, and none of Nemo's functions enter your namespace.
+
+**Why not reexport.** Nemo exports `roots`, `degree`, `derivative`, `coeff`, `factor`, `term`
+and `terms`. Every one of those collides with something these notes use — `Polynomials.roots`
+and `Polynomials.degree` above all, and `derivative` is a three-way clash between Nemo,
+`Polynomials` and `Symbolics`. Reexporting would turn working code into ambiguity errors. The
+same reasoning applies to `Symbolics`' own public-but-unexported names (`derivative`, `value`,
+`get_variables`, `jacobian`, `hessian` and others): this package does **not** re-export them
+either, so they stay qualified as `Symbolics.derivative`. That is upstream's decision and
+overriding it would break the collision-avoidance it exists for.
+
+### A lot of names arrive at once
+
+`Roots`, `LinearAlgebra`, `SpecialFunctions`, `IntervalSets`, `Symbolics`, `Plots` and
+`LaTeXStrings` are reexported; `ForwardDiff` and `Nemo` are exported as module names; and `e`
+is exported as `exp(1)`. Clashes are real rather than theoretical: alongside SciML's
 `BracketingNonlinearSolve`, both `Bisection` and `solve` become ambiguous and have to be
 qualified.
 
@@ -109,6 +157,10 @@ import Latexify
 # `using Nemo` of their own. A reexport would drag in Nemo's `derivative`, `coeff`, `roots`
 # and friends, which clash with Symbolics; a bare import brings in nothing.
 import Nemo
+# The module NAME is exported (as `ForwardDiff` is above), so that downstream code can
+# write `Nemo.overlaps(a, b)` on the balls `root_enclosures` returns without taking a
+# dependency of its own. Only the binding `Nemo` enters scope -- none of its functions.
+export Nemo
 
 using Reexport
 @reexport using Roots
@@ -135,6 +187,8 @@ include("plot-utils.jl")
 include("plots.jl")
 include("symbolics.jl")
 include("symbolic-algebra.jl")
+include("numeric-roots.jl")
+include("conventional-latex.jl")
 
 # Typeset symbolic expressions as display math in HTML/LaTeX frontends (Quarto, Jupyter,
 # Documenter), parallel to SymPy's built-in text/latex show. Latexify's default text/latex
@@ -192,5 +246,7 @@ export tangent, secant, D, sign_chart, SignChart
 export riemann, fubini
 export divergence, gradient, curl, ∇, uvec
 export exact_trig_values, factored_poly, poly_factors, partial_fractions
+export numeric_roots, root_enclosures
+export conventional_latex
 
 end # module

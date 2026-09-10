@@ -582,4 +582,6 @@ end
 include("package-test.jl")
 include("test-symbolics.jl")
 include("test-symbolic-algebra.jl")
+include("test-numeric-roots.jl")
+include("test-conventional-latex.jl")
 include("test-plots.jl")

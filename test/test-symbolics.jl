@@ -47,9 +47,19 @@ end
     # namespace, where `derivative`, `coeff` and `roots` would collide with Symbolics.
     @test !isdefined(@__MODULE__, :ZZ)
     @test !isdefined(@__MODULE__, :QQ)
-    @test :Nemo ∉ names(CalculusWithJuliaSquared)
     @test !isdefined(@__MODULE__, :derivative)          # Nemo exports one; Symbolics does not — neither may appear
     @test isequal(Symbolics.value(Symbolics.derivative(x^2, x)), Symbolics.value(2x))
+
+    # The module BINDING, though, is exported deliberately (v0.14.0), so that the balls
+    # `root_enclosures` returns can be worked with -- `Nemo.overlaps(a, b)` and friends --
+    # without a downstream dependency on Nemo. Exporting a module name brings in only
+    # that name, which is the whole point: the assertions above must keep passing.
+    @test :Nemo ∈ names(CalculusWithJuliaSquared)
+    @test isdefined(@__MODULE__, :Nemo)
+    for leaked in (:coeff, :roots, :overlaps, :midpoint, :radius, :ArbField, :QQBar)
+        @test !isdefined(@__MODULE__, leaked)
+    end
+    @test Nemo.overlaps(Nemo.ArbField(64)(1), Nemo.ArbField(64)(1))   # reachable, qualified
 
 end
 
