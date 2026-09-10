@@ -462,3 +462,85 @@ function partial_fractions(ex, var)
     end
     out
 end
+
+# --------------------------------------------------------------------------------
+# Euclidean division of polynomials
+#
+# This is TYPE PIRACY, deliberately: `divrem` is `Base`'s and `Num` is `Symbolics`'.
+# It is the benign kind -- `divrem` on two `Num`s currently throws `MethodError`, so
+# no working code can change behaviour -- and it is listed in the "Cautions" section
+# of the module docstring alongside the package's other three.
+#
+# It is worth the piracy rather than a name of our own because the point being taught
+# is that Julia's *generic* `divrem` divides polynomials exactly as it divides
+# integers, `a = b*q + r` with `deg r < deg b`. A `poly_divrem` would state the
+# opposite. `Nemo` supplies the division over the rationals.
+# --------------------------------------------------------------------------------
+
+# With no `var` argument to say which symbol is the indeterminate, it has to come from
+# the expressions themselves -- so there must be exactly one between the two of them.
+# A constant on one side is fine; the other side names the variable.
+function _shared_variable(a, b)
+    seen = Any[]
+    for ex in (a, b), u in Symbolics.get_variables(ex)
+        any(v -> isequal(v, u), seen) || push!(seen, u)
+    end
+
+    isempty(seen) && throw(ArgumentError(
+        "`divrem` needs a polynomial variable, but `$a` and `$b` are both constants."))
+    length(seen) == 1 || throw(ArgumentError(
+        "expected polynomials in a single variable, but `$a` and `$b` involve " *
+        "$(length(seen)) (" * join(string.(seen), ", ") * "). " *
+        "Substitute values for all but one first, e.g. `substitute(ex, Dict($(seen[2]) => 1))`."))
+
+    Symbolics.Num(only(seen))
+end
+
+"""
+    divrem(a::Num, b::Num)
+
+Divide one polynomial by another, returning `(quotient, remainder)`.
+
+This is Julia's generic `divrem` extended to symbolic polynomials, and it means what it
+means for integers: `a == b*q + r`, with the remainder of strictly lower degree than
+`b`. It is the division algorithm behind rewriting a rational expression as a polynomial
+plus a proper fraction, which is how a slant asymptote is found.
+
+```jldoctest
+julia> using CalculusWithJuliaSquared
+
+julia> @variables x;
+
+julia> q, r = divrem(5x^3 + 6x^2 + 2, x - 1)
+(11 + 11x + 5(x^2), 13)
+```
+
+Both arguments must be polynomials over the rationals in the *same* single variable,
+which is read off the expressions themselves since there is no argument naming it. A
+constant on one side is fine. Dividing by zero throws `DivideError`, as it does for
+numbers.
+
+!!! note "This method is type piracy"
+    `divrem` belongs to `Base` and `Num` belongs to `Symbolics`, so adding this method
+    makes it visible to every package in the session. It is deliberate, and benign in the
+    sense set out under *Cautions* in the [`CalculusWithJuliaSquared`](@ref) module
+    documentation: without it the call throws `MethodError`, so no working code changes
+    behaviour. It is named `divrem` rather than given a name of our own precisely because
+    the point is that Julia's *generic* `divrem` divides polynomials just as it divides
+    integers.
+
+For the partial-fraction decomposition of the whole rational expression in one step, see
+[`partial_fractions`](@ref).
+"""
+function Base.divrem(a::Symbolics.Num, b::Symbolics.Num)
+    var = _shared_variable(a, b)
+
+    R, y = _nemo_ring()
+    pa = _to_nemo(a, var, R, y)
+    pb = _to_nemo(b, var, R, y)
+
+    iszero(pb) && throw(DivideError())
+
+    q, r = Nemo.divrem(pa, pb)
+    (_from_nemo(q, var), _from_nemo(r, var))
+end
