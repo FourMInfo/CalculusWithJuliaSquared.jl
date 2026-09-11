@@ -19,7 +19,7 @@ This package must have **zero Python anywhere in its dependency tree** — that 
 
 ## Workflow
 
-Follow the `phased-implementation-workflow` skill — it is the source of truth for branching, where PR boundaries fall, CI, and merge discipline; do not restate its rules here. The `knowledge-capture-conventions` skill governs where learnings go; plan documents live in the gitignored `_research/` folder (local-only, never commit).
+Follow the `phased-implementation-workflow` skill — it is the source of truth for branching, where PR boundaries fall, CI, and merge discipline; do not restate its rules here. Its companion `test-design-discipline` covers how to write tests that can actually fail, and the rule that **every API name appearing in prose must be executed** before it ships. The `knowledge-capture-conventions` skill governs where learnings go; plan documents live in the gitignored `_research/` folder (local-only, never commit).
 
 ## Versioning & Releases
 
