@@ -48,5 +48,51 @@ Roots.Callable_Function(M::Roots.AbstractUnivariateZeroMethod,
 
 Roots.FnWrapper(f::_SymbolicRootInput) = Roots.FnWrapper(_symbolic_callable(f))
 
+"""
+    find_zero(ex, x0; kwargs...)
+    find_zeros(ex, a, b; kwargs...)
+    ZeroProblem(ex, x0)
+
+Solve for the zeros of a **symbolic** expression or `~` equation, wherever `Roots`
+expects a function.
+
+```jldoctest
+julia> using CalculusWithJuliaSquared
+
+julia> @variables x;
+
+julia> find_zero(x^3 - x + 1, (-2, -1))
+-1.324717957244746
+
+julia> find_zero(cos(x) ~ x, (0, 2))
+0.7390851332151607
+
+julia> find_zeros(x^2 - 1, -3, 3)
+2-element Vector{Float64}:
+ -1.0
+  1.0
+```
+
+The expression must contain **exactly one** free variable, since nothing in the call
+names the one being solved for; substitute values for the others first, e.g.
+`substitute(ex, Dict(a => 1))`. An equation `lhs ~ rhs` is solved as `lhs - rhs == 0`.
+
+`Roots` ships precisely this for `SymPy` (`RootsSymPyExt`) but has no `Symbolics`
+equivalent. These methods are that extension's mirror image, with
+`Symbolics.build_function` in place of `lambdify`.
+
+!!! note "These methods are type piracy"
+    An extension *of* `Roots` can only be declared inside `Roots` itself, so supplying it
+    from here means adding methods to `Roots.Callable_Function`, `Roots.FnWrapper` and
+    `Roots.find_zeros` — functions we do not own — dispatching on `Symbolics.Num` and
+    `Symbolics.Equation`, types we do not own either. It is benign in the sense set out
+    under *Cautions* in the [`CalculusWithJuliaSquared`](@ref) module documentation:
+    every call above throws `MethodError` without it, so no working code changes
+    behaviour.
+
+    Should `Roots` ever ship its own `Symbolics` support, expect a **method-overwrite
+    warning on load**. That is not a bug to work around — the fix is to delete this
+    block, because upstream's version supersedes it.
+"""
 Roots.find_zeros(f::_SymbolicRootInput, a, b = nothing; kwargs...) =
     Roots.find_zeros(_symbolic_callable(f), a, b; kwargs...)

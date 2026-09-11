@@ -2,10 +2,34 @@
 
 """
     D(f)
+    D(f, n::Int)
 
-Function interface to `ForwardDiff.derivative`.
+Function interface to `ForwardDiff.derivative`; `D(f, n)` applies it `n` times, with
+`D(f, 0)` returning `f` itself.
 
-A method for `adjoint` for functions dispatches to `D`, so that the notation `f'` can be used to take the derivative of a function. (This is type piracy.)
+A method for `Base.adjoint` on functions dispatches to `D`, so that the notation `f'`
+can be used to take the derivative of a function.
+
+```jldoctest
+julia> using CalculusWithJuliaSquared
+
+julia> f(u) = u^2;
+
+julia> f'(3.0)
+6.0
+```
+
+!!! note "This method is type piracy"
+    `adjoint` and `Function` both belong to `Base`, so adding `Base.adjoint(::Function)`
+    makes `f'` mean *derivative* for every package in the session, not only for code
+    calling into this one. It is inherited from upstream `CalculusWithJulia`, and it is
+    benign in the sense set out under *Cautions* in the
+    [`CalculusWithJuliaSquared`](@ref) module documentation: without it the call throws
+    `MethodError`, so no working code changes behaviour.
+
+    One caveat it does introduce: `'` on a *collection* of functions still means the
+    ordinary transpose. `[sin, cos]'` is an `Adjoint{Function, Vector{Function}}`, not
+    `[sin', cos']`. Write `D.([sin, cos])` when derivatives are meant.
 """
 function D(f, n::Int=1)
     n < 0 && throw(ArgumentError("n is a non-negative integer"))

@@ -70,7 +70,7 @@ It matters because Julia's method tables are **global**: such a method is visibl
 package in the session, not only to code that calls into this one. Loading this package can
 therefore change how *unrelated* code behaves, which is why the practice is discouraged.
 
-This package commits it four times, each deliberately, and each passing the same test:
+This package commits it five times, each deliberately, and each passing the same test:
 
 > **The benign test.** Every call the pirated method answers is a call that would otherwise
 > have **thrown** — a `MethodError`, or an outright error. No working code changes its
@@ -78,7 +78,7 @@ This package commits it four times, each deliberately, and each passing the same
 > coupled packages that "separate features from definitions" is the ground these stand on.
 
 A piracy that changed the *result* of a call that already worked would not pass that test,
-and none of the four below does.
+and none of the five below does.
 
 | method | what it adds | without it |
 |:--|:--|:--|
@@ -86,18 +86,27 @@ and none of the four below does.
 | `Base.show` for `Symbolics.Num`, and for the vector `symbolic_solve` returns | display math, so expressions typeset in Quarto, Documenter and Jupyter instead of printing internal type names | prints the type, not the mathematics |
 | `Roots.find_zero`, `find_zeros`, `ZeroProblem` on a symbolic expression or `~` equation | solving `find_zero(x^3 - x + 1, (-2, -1))` directly, mirroring the `SymPy` extension `Roots` already ships | `MethodError` |
 | `Base.divrem` on two `Symbolics.Num`s | Euclidean division of polynomials, `a = b*q + r` with `deg r < deg b` | `MethodError` |
+| `Plots._show` for `text/html` on a `Plot{PlotlyBackend}` | emits the plot *body*, so an interactive Plotly figure appears inline in a rendered page (inherited from upstream's Plots extension) | errors: *"only png or svg allowed. got: :html"* |
 
-Two of these are worth a further word:
+Three of these are worth a further word:
 
   * **`divrem` is named, not renamed.** A `poly_divrem` of our own would have avoided the
     piracy entirely. It is not used because the point being taught is that Julia's *generic*
     `divrem` divides polynomials exactly as it divides integers; a bespoke name would state
     the opposite.
 
+  * **`Plots._show` pirates an *internal*.** The leading underscore marks it as private to
+    `Plots`, so unlike the other four it carries no API stability promise at all: a patch
+    release could rename or remove it, and the symptom would be a plot that silently stops
+    being interactive rather than an error. Measured 2026-09-11 against `Plots` v1 —
+    `_best_html_output_type` maps `:plotly => :html`, and the generic
+    `_show(::IO, ::MIME"text/html", ::Plot)` has no `:html` branch, so without this method
+    the call throws. That is what keeps it on the benign side of the test above.
+
   * **`find_zero` may one day collide.** Should `Roots` add its own `Symbolics` support,
     expect a **method-overwrite warning on load**. That is not a bug to work around: the fix
     is to delete our block, because upstream's version supersedes it. The same applies to any
-    of the four if the owning package adopts the method itself.
+    of the five if the owning package adopts the method itself.
 
 ### `Nemo` is imported, and only its *name* is exported
 
@@ -194,6 +203,32 @@ include("conventional-latex.jl")
 # Documenter), parallel to SymPy's built-in text/latex show. Latexify's default text/latex
 # wraps in $$\begin{equation}...\end{equation}$$ which Quarto renders literally, so emit
 # clean \[ ... \] via both MIMEs. (No effect in the plain-text REPL.)
+"""
+    show(io, ::MIME"text/latex", x::Symbolics.Num)
+    show(io, ::MIME"text/html",  x::Symbolics.Num)
+
+Typeset a symbolic expression as **display math** in HTML/LaTeX frontends — Quarto,
+Jupyter, Documenter — parallel to the `text/latex` show `SymPy` has built in. Companion
+methods do the same for the vector of roots `Symbolics.symbolic_solve` returns, which
+would otherwise print its full internal type name ahead of the mathematics.
+
+`Latexify`'s own `text/latex` output wraps the expression in
+`\$\$\\begin{equation}...\\end{equation}\$\$`, which Quarto renders literally, so these emit
+a clean `\\[ ... \\]` through both MIME types instead. There is no effect in the plain-text
+REPL, which uses `text/plain`.
+
+!!! note "These methods are type piracy"
+    `show` belongs to `Base` and `Num` belongs to `Symbolics`, so these methods change how
+    symbolic expressions display for every package in the session. They are benign in the
+    sense set out under *Cautions* in the [`CalculusWithJuliaSquared`](@ref) module
+    documentation: neither `Num` nor the solution vector has a `text/latex` or `text/html`
+    method without them, so nothing that previously displayed changes — output that was
+    unavailable becomes available.
+
+    Deliberately **not** extended to `AbstractVector{<:Symbolics.Num}`: measured 2026-09-04,
+    the only published cells rendering one are the echoed return of `@variables`, so
+    widening would dress a macro's return value up as mathematics.
+"""
 Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
     print(io, "\\[ ", Latexify.latexify(x; env=:raw), " \\]")
 Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
