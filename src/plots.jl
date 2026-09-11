@@ -21,7 +21,27 @@ import Plots: plot, plot!, scatter, scatter!, Shape, current,
 
 using Plots.RecipesBase
 
-# just show body, not standalone
+"""
+    Plots._show(io, ::MIME"text/html", plt::Plots.Plot{Plots.PlotlyBackend})
+
+Write a Plotly plot as its HTML **body** rather than as a standalone document, so the
+figure embeds in a rendered page — a Quarto chapter, a Jupyter cell — and stays
+interactive. Inherited from upstream `CalculusWithJulia`, which kept it behind a `Plots`
+package extension; here `Plots` is a hard dependency, so it lives in the package proper.
+
+!!! note "This method is type piracy"
+    Both `Plots._show` and `Plots.Plot` belong to `Plots`. It is benign in the sense set
+    out under *Cautions* in the [`CalculusWithJuliaSquared`](@ref) module documentation:
+    measured 2026-09-11, `Plots._best_html_output_type` maps `:plotly => :html` while the
+    generic `_show(::IO, ::MIME"text/html", ::Plot)` handles only `:png` and `:svg`, so
+    without this method the call throws *"only png or svg allowed. got: :html"*. Nothing
+    that previously worked changes.
+
+    Unlike the other four, this one pirates an **internal**: the leading underscore means
+    `Plots` promises nothing about it across releases. If a future `Plots` renames or
+    removes `_show`, the symptom is a plot that quietly stops being interactive, not a
+    load error — so re-check it when `Plots` takes a major bump.
+"""
 function Plots._show(io::IO, ::MIME"text/html", plt::Plots.Plot{Plots.PlotlyBackend})
     write(io, Plots.html_body(plt))
 end
