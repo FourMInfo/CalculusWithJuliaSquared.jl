@@ -176,3 +176,224 @@ end
     @test conventional_latex(3PI/4) == "\\frac{3 \\pi}{4}"
     @test conventional_latex(5PI/6) == "\\frac{5 \\pi}{6}"
 end
+
+# A `^{...}` group followed directly by another `^` is a double superscript, which TeX
+# rejects outright. Brace-aware, so an exponent that itself contains braces is skipped whole.
+function _no_double_superscript(s)
+    i = firstindex(s)
+    while i <= lastindex(s)
+        if s[i] == '^' && i < lastindex(s) && s[nextind(s, i)] == '{'
+            depth, j = 0, nextind(s, i)
+            while j <= lastindex(s)
+                s[j] == '{' && (depth += 1)
+                s[j] == '}' && (depth -= 1)
+                depth == 0 && break
+                j = nextind(s, j)
+            end
+            j < lastindex(s) && s[nextind(s, j)] == '^' && return false
+        end
+        i = nextind(s, i)
+    end
+    true
+end
+
+# Run `f` with the session's variable letters replaced, restoring the default whatever
+# happens -- a failure here must not leak a changed setting into every later test.
+function _with_variables(f, vars...)
+    set_conventional_variables(vars...)
+    try
+        f()
+    finally
+        reset_conventional_variables()
+    end
+end
+
+@testset "conventional display (v0.15.0)" begin
+
+    @variables x y z a b c h k m p q s t n r E F
+    @variables x0 y0 x_0 x₀ theta θ rho_0 lambda1 height v_max f_x x_alpha xs[0:2]
+    PI = Symbolics.Num(pi)
+    SQ(v) = sqrt(Symbolics.Num(v))
+    outputs = String[]                       # every output below, for the structural checks
+    cl(ex; kw...) = (out = conventional_latex(ex; kw...); push!(outputs, out); out)
+
+    # ---- 1. a power's base is bracketed unless it is a bare symbol or plain number -----
+    # Measured against v0.14.1: a product base lost its brackets, which is WRONG MATH
+    # (`(a*x)^y` came out `x a^{y}`), and a power or exponential base produced a double
+    # superscript, which TeX refuses to typeset.
+
+    @test cl((a*x)^y)    == "\\left( a x \\right)^{y}"
+    @test cl((x/2)^2)    == "\\left( \\frac{x}{2} \\right)^{2}"
+    @test cl((1//2)^x)   == "\\left( \\frac{1}{2} \\right)^{x}"
+    @test cl((x^2)^y)    == "\\left( x^{2} \\right)^{y}"
+    @test cl(exp(x)^2)   == "\\left( e^{x} \\right)^{2}"
+    @test cl(sqrt(x)^3)  == "\\left( \\sqrt{x} \\right)^{3}"
+    @test cl(log(x)^2)   == "\\left( \\log\\left( x \\right) \\right)^{2}"
+    @test cl(abs(x)^2)   == "\\left( \\left|x\\right| \\right)^{2}"
+
+    # negative space: these bases need no brackets, or already had the right ones
+    @test cl((x+1)^2)            == "\\left( x + 1 \\right)^{2}"
+    @test cl(Symbolics.Num(2)^x) == "2^{x}"
+    @test cl((-2)^x)             == "\\left( -2 \\right)^{x}"
+    @test cl(PI^x)               == "\\pi^{x}"
+    @test cl((x^2)^(1//3))       == "x^{\\frac{2}{3}}"
+    @test cl((2.5)^x)            == "2.5^{x}"
+
+    # ---- 2. negative powers ----------------------------------------------------------
+    # Symbolics STORES `x^(-2)` as `(1/x)^2` -- the same tree -- so this is how a negative
+    # power reaches the page. A text writes it as one fraction.
+
+    @test isequal(Symbolics.value(x^(-2)), Symbolics.value((1/x)^2))
+    @test cl(x^(-2))         == "\\frac{1}{x^{2}}"
+    @test cl((1/x)^2)        == "\\frac{1}{x^{2}}"
+    @test cl((1/(x+1))^2)    == "\\frac{1}{\\left( x + 1 \\right)^{2}}"
+    @test cl(a*x^(-2))       == "\\frac{a}{x^{2}}"      # stored as `a * (1/x)^2`
+    @test cl(x^(-1))         == "\\frac{1}{x}"          # unchanged: stored as `1/x`
+    # only a numerator of 1 folds; any other fraction base keeps its brackets
+    @test cl((a/x)^2)        == "\\left( \\frac{a}{x} \\right)^{2}"
+
+    # ---- 3. factor order: numbers, constants, letters (variables last), sums, functions --
+
+    @test cl(a*x^2)              == "a x^{2}"
+    @test cl(b*x)                == "b x"
+    @test cl(3*h*x)              == "3 h x"
+    @test cl(-2*b*x)             == "-2 b x"
+    @test cl(PI*a*x)             == "\\pi a x"
+    @test cl(F*E)                == "E F"               # alphabetical, ignoring case
+    @test cl(a*E^2)              == "a E^{2}"
+    @test cl(k*x*t)              == "k t x"             # variables after other letters
+    @test cl(sqrt(x)*a)          == "a \\sqrt{x}"       # a radical of a symbol is a function
+    @test cl((x+1)*(x-1)*a)      == "a \\left( x - 1 \\right) \\left( x + 1 \\right)"
+    @test cl((x+1)*sin(x))       == "\\left( x + 1 \\right) \\sin\\left( x \\right)"
+    @test cl(factored_poly(2x^3 - 6x^2 + 4x, x)) ==
+          "2 x \\left( x - 1 \\right) \\left( x - 2 \\right)"
+
+    # functions in textbook order, not the alphabetical order the total key would fall to
+    @test cl(sin(x)*cos(x))      == "\\sin\\left( x \\right) \\cos\\left( x \\right)"
+    @test cl(exp(x)*sin(x))      == "e^{x} \\sin\\left( x \\right)"
+    @test cl(sec(x)*tan(x))      == "\\tan\\left( x \\right) \\sec\\left( x \\right)"
+    @test cl(log(x)*sin(x))      == "\\sin\\left( x \\right) \\log\\left( x \\right)"
+    @test cl(sin(2x)*sin(x))     == "\\sin\\left( x \\right) \\sin\\left( 2 x \\right)"
+
+    # negative space
+    @test cl(2*PI*x)             == "2 \\pi x"
+    @test cl(SQ(2)*x)            == "\\sqrt{2} x"
+    @test cl(x^5*sin(x))         == "x^{5} \\sin\\left( x \\right)"
+    @test cl(exp(x)*x^2)         == "x^{2} e^{x}"
+    @test cl(x*(x+1))            == "x \\left( x + 1 \\right)"
+    @test cl(SQ(2)*x + 1)        == "\\sqrt{2} x + 1"
+
+    # ---- 4. the arguments of a function are typeset by the same rules ------------------
+
+    @test cl(cos(2x))            == "\\cos\\left( 2 x \\right)"
+    @test cl(abs(x - 1))         == "\\left|x - 1\\right|"
+    @test cl(exp(x - 1))         == "e^{x - 1}"
+    @test cl(exp(-x^2/2))        == "e^{-\\frac{x^{2}}{2}}"
+    @test cl(cos(PI*x/2))        == "\\cos\\left( \\frac{\\pi x}{2} \\right)"
+    @test cl(atan(2x))           == "\\arctan\\left( 2 x \\right)"
+    @test cl(sin(a*(x - b*PI) + c)) == "\\sin\\left( a \\left( x - \\pi b \\right) + c \\right)"
+    @test cl(sin(x)^2)           == "\\sin^{2}\\left( x \\right)"
+    # negative space
+    @test cl(log(x + 1))         == "\\log\\left( x + 1 \\right)"
+    @test occursin("\\arctan", cl(atan(y, x)))           # two arguments: Latexify's shape
+
+    # ---- 5. complex constants keep their imaginary unit ---------------------------------
+    # Measured against v0.14.1: `abs` of a Complex was taken, so `i` came out `1.0` and
+    # `-1 + 2i` came out as its modulus -- silently wrong mathematics.
+
+    @test Set(cl.(symbolic_solve(x^2 + 1, x)))      == Set(["i", "-i"])
+    @test Set(cl.(symbolic_solve(x^2 + 2x + 5, x))) == Set(["-1 + 2 i", "-1 - 2 i"])
+    @test Set(cl.(symbolic_solve(x^3 - 1, x)))      ==
+          Set(["1", "-\\frac{1}{2} + \\frac{\\sqrt{3}}{2} i", "-\\frac{1}{2} - \\frac{\\sqrt{3}}{2} i"])
+    let cardano2 = cl(symbolic_solve(x^3 + p*x + q, x)[2])
+        @test occursin(" i", cardano2)
+        @test !occursin("0.5", cardano2)
+    end
+
+    # ---- 6. sums: degree in the VARIABLE letters, then total degree, then alphabetical --
+    # Default variables n r t u v w x y z θ. Subscripted names are constants (exact match).
+
+    @test cl(x - b*PI)                     == "x - \\pi b"
+    @test cl(3x^2 + 3h*x + h^2)            == "3 x^{2} + 3 h x + h^{2}"
+    @test cl(simplify(expand(((x-h)^3 - x^3)/h))) == "-3 x^{2} + 3 h x - h^{2}"
+    @test cl(expand(a*(x-E)^2 + b*(x-E) + c + F)) ==
+          "a x^{2} - 2 a E x + b x + a E^{2} - b E + c + F"
+    @test cl(simplify(expand(x^2 * substitute(a*x^2 + b*x + c, x => 1/x)))) == "c x^{2} + b x + a"
+    @test cl(a*x^2 + b*x + c)              == "a x^{2} + b x + c"
+    @test cl(m*x - m*x0 + y0)              == "m x - m x_{0} + y_{0}"   # x0, y0 are constants
+    @test cl(x^2 + 2x*y + y^2)             == "x^{2} + 2 x y + y^{2}"   # v0.14.1: `2 x y + x^{2} + y^{2}`
+    @test cl(x^3 + p*x + q)                == "x^{3} + p x + q"         # v0.14.1: `x^{3} + x p + q`
+    # negative space
+    @test cl(b^2 - 4c)                     == "b^{2} - 4 c"
+    @test cl(-(1//2)*b + (1//2)*sqrt(b^2 - 4c)) == "\\frac{-b + \\sqrt{b^{2} - 4 c}}{2}"
+    @test cl(3//4 + (1//4)*SQ(41))         == "\\frac{3 + \\sqrt{41}}{4}"
+
+    # the keyword replaces the default letters for one call, and only that call
+    @test cl(expand((s - k)^2))                      == "k^{2} - 2 k s + s^{2}"
+    @test cl(expand((s - k)^2); variables = [s])     == "s^{2} - 2 k s + k^{2}"
+    @test cl(expand((s - k)^2); variables = [:s])    == "s^{2} - 2 k s + k^{2}"
+    @test cl(expand((s - k)^2))                      == "k^{2} - 2 k s + s^{2}"
+
+    # the session setting, read by conventional_latex AND by show
+    @test issetequal(get_conventional_variables(), [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta])
+    @test _with_variables(() -> conventional_latex(expand((s - k)^2)), s) == "s^{2} - 2 k s + k^{2}"
+    @test _with_variables(() -> sprint(show, MIME"text/latex"(), expand((s - k)^2)), :s) ==
+          "\\[ s^{2} - 2 k s + k^{2} \\]"
+    @test _with_variables(() -> get_conventional_variables(), s, t) == [:s, :t]
+    @test issetequal(get_conventional_variables(), [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta])
+
+    # ---- 7. show goes through conventional_latex ---------------------------------------
+
+    @test sprint(show, MIME"text/latex"(), a*x^2 + b*x + c) == "\\[ a x^{2} + b x + c \\]"
+    @test sprint(show, MIME"text/html"(), a*x^2 + b*x + c) ==
+          "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ a x^{2} + b x + c \\]</span>"
+    @test sprint(show, MIME"text/latex"(), Symbolics.Num(4)) == "\\[ 4 \\]"
+    # the solution vector keeps Latexify's array layout, one conventional row per root
+    @test sprint(show, MIME"text/latex"(), symbolic_solve(x^2 - 2, x)) ==
+          "\\[ \\left[\n\\begin{array}{c}\n\\sqrt{2} \\\\\n-\\sqrt{2} \\\\\n\\end{array}\n\\right] \\]"
+    @test occursin("\\frac{-b + \\sqrt{b^{2} - 4 c}}{2}",
+                   sprint(show, MIME"text/html"(), symbolic_solve(x^2 + b*x + c, x)))
+
+    # ---- 8. operator names upright, and no `~` ------------------------------------------
+
+    @test cl(sign(x))                 == "\\operatorname{sign}\\left( x \\right)"
+    @test cl(max(x, y))               == "\\max\\left( x, y \\right)"
+    @test cl(min(x, y))               == "\\min\\left( x, y \\right)"
+    @test cl(Differential(x)(sin(x))) == "\\frac{\\mathrm{d} \\sin\\left( x \\right)}{\\mathrm{d}x}"
+
+    # ---- 10. symbol names typeset as mathematics, not as code ---------------------------
+    # Latexify sets every multi-character name in typewriter: `\mathtt{x0}`, `\mathtt{theta}`.
+
+    @test cl(x0)      == "x_{0}"
+    @test cl(x_0)     == "x_{0}"
+    @test cl(x₀)      == "x_{0}"
+    @test cl(theta)   == "\\theta"
+    @test cl(θ)       == "\\theta"
+    @test cl(rho_0)   == "\\rho_{0}"
+    @test cl(lambda1) == "\\lambda_{1}"
+    @test cl(height)  == "\\mathit{height}"
+    @test cl(v_max)   == "v_{\\mathrm{max}}"          # a descriptive subscript is upright
+    @test cl(f_x)     == "f_{x}"                      # a one-letter subscript is italic
+    @test cl(x_alpha) == "x_{\\alpha}"
+    @test cl(r*theta) == "r \\theta"                  # both default variables
+    @test cl(xs[1])   == "\\mathit{xs}_{1}"           # array elements: published in polynomials_package
+
+    # ---- the ordering stays DETERMINISTIC -----------------------------------------------
+    # Rebuild each expression every time; sorting a cached tree would test nothing.
+
+    for build in (() -> expand(a*(x-E)^2 + b*(x-E) + c + F), () -> sin(x)*cos(x)*exp(x)*x^2*a,
+                  () -> expand((s - k)^2), () -> symbolic_solve(x^3 - 1, x)[2])
+        @test length(Set(conventional_latex(build()) for _ in 1:20)) == 1
+    end
+
+    # ---- structural validity of everything produced above -------------------------------
+
+    @test length(outputs) > 80                  # guards against the checks running on nothing
+    for out in outputs
+        @test _braces_balanced(out)
+        @test _no_double_superscript(out)
+        @test !startswith(out, " ")              # the Pandoc defect
+        @test !occursin("~", out)                # Latexify's product separator
+        @test !occursin("\\mathtt", out)         # names set as code
+    end
+end
