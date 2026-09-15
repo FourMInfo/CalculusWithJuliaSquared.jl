@@ -20,6 +20,12 @@ These stand in for `SymPy`'s automatic special angles, `factor` and `apart`. Alo
 certified intervals, standing in for `N.(solve(...))` and `sympy.real_roots`; and `divrem`
 divides one polynomial by another.
 
+* It displays symbolic expressions in conventional notation. `conventional_latex` typesets an
+expression the way a mathematics text writes it -- term and factor order, fractions, powers,
+names -- and every symbolic expression displays through it in Quarto, Jupyter and Documenter.
+`set_conventional_default`, `get_conventional_default` and `reset_conventional_default`
+choose, for the session, which letters are the variables and which way a sum runs.
+
 
 ## Packages loaded by `CalculusWithJuliaSquared`
 
@@ -200,9 +206,10 @@ include("numeric-roots.jl")
 include("conventional-latex.jl")
 
 # Typeset symbolic expressions as display math in HTML/LaTeX frontends (Quarto, Jupyter,
-# Documenter), parallel to SymPy's built-in text/latex show. Latexify's default text/latex
-# wraps in $$\begin{equation}...\end{equation}$$ which Quarto renders literally, so emit
-# clean \[ ... \] via both MIMEs. (No effect in the plain-text REPL.)
+# Documenter), parallel to SymPy's built-in text/latex show. Emit clean \[ ... \] via both
+# MIMEs -- Latexify's default wraps in $$\begin{equation}...\end{equation}$$, which Quarto
+# renders literally -- and typeset the body with `conventional_latex`, so what a reader SEES
+# is conventional notation rather than Symbolics' storage order. (No effect in the REPL.)
 """
     show(io, ::MIME"text/latex", x::Symbolics.Num)
     show(io, ::MIME"text/html",  x::Symbolics.Num)
@@ -212,10 +219,16 @@ Jupyter, Documenter — parallel to the `text/latex` show `SymPy` has built in. 
 methods do the same for the vector of roots `Symbolics.symbolic_solve` returns, which
 would otherwise print its full internal type name ahead of the mathematics.
 
-`Latexify`'s own `text/latex` output wraps the expression in
-`\$\$\\begin{equation}...\\end{equation}\$\$`, which Quarto renders literally, so these emit
-a clean `\\[ ... \\]` through both MIME types instead. There is no effect in the plain-text
-REPL, which uses `text/plain`.
+The mathematics is typeset by [`conventional_latex`](@ref), so an expression displays the
+way a text writes it — `a x^{2} + b x + c`, not `c + b x + x^{2} a` — and the session
+defaults set by [`set_conventional_default`](@ref) (which letters are variables, which way
+a sum runs) apply to display too. See `conventional_latex` for the conventions. The
+solution vector keeps `Latexify`'s array layout, one conventionally typeset root per row.
+
+These emit a clean `\\[ ... \\]` through both MIME types, because `Latexify`'s own
+`text/latex` output wraps the expression in `\$\$\\begin{equation}...\\end{equation}\$\$`,
+which Quarto renders literally. There is no effect in the plain-text REPL, which uses
+`text/plain`.
 
 !!! note "These methods are type piracy"
     `show` belongs to `Base` and `Num` belongs to `Symbolics`, so these methods change how
@@ -230,10 +243,10 @@ REPL, which uses `text/plain`.
     widening would dress a macro's return value up as mathematics.
 """
 Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
-    print(io, "\\[ ", Latexify.latexify(x; env=:raw), " \\]")
+    print(io, "\\[ ", conventional_latex(x), " \\]")
 Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
     print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
-          Latexify.latexify(x; env=:raw), " \\]</span>")
+          conventional_latex(x), " \\]</span>")
 
 # `symbolic_solve` returns a `Vector` of raw `BasicSymbolic`, which otherwise prints with
 # its full type name -- `Vector{SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"
@@ -248,11 +261,16 @@ Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
 # order. Decide it there, against a real rendered gradient. See `_research/CHAPTER_MAP.md`.
 const _SymbolicSolutions = AbstractVector{<:Symbolics.SymbolicUtils.BasicSymbolic}
 
+# Latexify's own column layout for a vector, measured 2026-09-15, with each root typeset
+# conventionally rather than by Latexify.
+_solutions_latex(xs) = "\\left[\n\\begin{array}{c}\n" *
+    join(conventional_latex(x) * " \\\\\n" for x in xs) * "\\end{array}\n\\right]"
+
 Base.show(io::IO, ::MIME"text/latex", xs::_SymbolicSolutions) =
-    print(io, "\\[ ", Latexify.latexify(xs; env=:raw), " \\]")
+    print(io, "\\[ ", _solutions_latex(xs), " \\]")
 Base.show(io::IO, ::MIME"text/html", xs::_SymbolicSolutions) =
     print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
-          Latexify.latexify(xs; env=:raw), " \\]</span>")
+          _solutions_latex(xs), " \\]</span>")
 
 # auto-configure plotting for headless vs interactive use
 # (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
@@ -282,6 +300,6 @@ export riemann, fubini
 export divergence, gradient, curl, ∇, uvec
 export exact_trig_values, factored_poly, poly_factors, partial_fractions
 export numeric_roots, root_enclosures
-export conventional_latex
+export conventional_latex, set_conventional_default, get_conventional_default, reset_conventional_default
 
 end # module

@@ -25,8 +25,34 @@ Follow the `phased-implementation-workflow` skill — it is the source of truth 
 
 Not registered in Julia's General registry; no upstream PRs intended (0.x SemVer marks divergence, not release-readiness). Never add registry tooling (TagBot etc.). Upstream is the `upstream` git remote — pull improvements by **cherry-picking** specific commits, not merging wholesale (the rename + fresh UUID make full merges conflict-heavy by design).
 
-**After every version bump here, bump `[compat] CalculusWithJuliaSquared` in `Calculus`.**
-Manifests are gitignored across these repos, so that bound is the *only* thing pinning a
+**Before merging a release whose change a published page could show, replay the book
+against the branch.** Anything that reaches rendered output counts: `show`, `conventional_latex`,
+a limit route, a value. Order: open the PR → re-render **every** published chapter of
+`CalculusWithJuliaSquaredNotes.jl` against the branch while the PR is under review → push any
+fix to the PR → merge on the go-ahead. Full, not scoped to the cells you reason are affected:
+v0.15.0 changed the display of every symbolic cell, which only a full render shows. The
+procedure (environment swap, render, cell-by-cell diff, restore) lives in that repo's
+`.github/instructions/porting.instructions.md` → "Render the book against a CWJS branch while
+its PR is open"; it runs from that repo's local `_research/scripts/`.
+
+**After every version bump here, re-pin EVERY consumer — enumerated from disk, never from a
+remembered list.** The set grows as book chapter groups are published (each carries its own
+environment and pin), so a count written down goes stale. Find them with both:
+
+```bash
+# pinned consumers -- the ones to bump
+/usr/bin/grep -rn 'CalculusWithJuliaSquared = "0\.' ~/Code/FourM/Study --include=Project.toml
+# every environment depending on this package at all, pinned or not (this repo's own
+# test/ and docs/ environments are sourced by path and are not consumers)
+/usr/bin/grep -rln 'f826098b-d57e-4440-b91e-2a05d35c24ae' ~/Code/FourM/Study --include=Project.toml
+```
+
+An environment in the second list but not the first depends on this package with **no** pin,
+and silently resolves whatever version it last saw. `/usr/bin/grep`, not `grep`: the shell's
+`grep` is a `ugrep` wrapper that honours `.gitignore`. After bumping, `Pkg.update()` each
+environment and read the resolved version back.
+
+Manifests are gitignored across these repos, so a `[compat]` bound is the *only* thing pinning a
 version — and when it is too tight nothing errors. The resolver quietly keeps the old
 release and the new API is simply absent. That is not hypothetical: `Calculus` sat on
 `"0.5.0"` (i.e. `< 0.6.0`) from v0.6.0 through v0.7.0, so `symlim` and `tlim` were invisible
