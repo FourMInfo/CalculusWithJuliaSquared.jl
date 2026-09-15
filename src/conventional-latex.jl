@@ -816,12 +816,14 @@ function _cl_parts(t, prec::Int, ctx)
     # Always the fraction form. `Latexify` switches between `\frac{d f}{dx}` and the operator
     # form `\frac{d}{dx} f` depending on the argument, and the operator form is ambiguous in
     # a product: `\frac{d}{dx} u(x) v(x)` reads as the derivative OF uv (caught by the book
-    # replay, in the product-rule section).
+    # replay, in the product-rule section). The `d` is italic, as US calculus texts -- and
+    # this book's prose, throughout -- write it; Latexify's upright `\mathrm{d}` is the ISO
+    # convention, which would also want an upright e and i.
     if op isa Symbolics.Differential
         n = op.order
         xv = _cl_render(Symbolics.unwrap(op.x), _PREC_SUM, ctx)
-        num = isone(n) ? "\\mathrm{d}" : "\\mathrm{d}^{$n}"
-        den = isone(n) ? "\\mathrm{d}$xv" : "\\mathrm{d}$(xv)^{$n}"
+        num = isone(n) ? "d" : "d^{$n}"
+        den = isone(n) ? "d$xv" : "d$(xv)^{$n}"
         return (false, "\\frac{$num $(_cl_render(args[1], _PREC_PROD, ctx))}{$den}", "")
     end
 
@@ -952,7 +954,7 @@ after the rest, then bracketed sums, then functions: `3 h x`, `2 \\pi x`, `a E^{
 `2 x \\left( x - 1 \\right) \\left( x - 2 \\right)`, `x^{2} e^{x}`. Functions go in textbook
 order -- radicals and absolute values, exponentials, `sin cos tan cot sec csc`, inverse
 trigonometric, hyperbolic, logarithms, then any other alphabetically, and derivatives last --
-so `2 \\sin x \\cos x`, `e^{x} \\sin x` and `u\\left( x \\right) \\frac{\\mathrm{d} v\\left( x \\right)}{\\mathrm{d}x}`.
+so `2 \\sin x \\cos x`, `e^{x} \\sin x` and `u\\left( x \\right) \\frac{d v\\left( x \\right)}{dx}`.
 The same function twice goes simpler argument first: `\\sin\\left( x \\right) \\sin\\left( 2 x \\right)`.
 Elements of an array go by name, then index: `\\mathit{xs}_{0} \\mathit{xs}_{1}`.
 
@@ -970,9 +972,9 @@ A function is typeset in `Latexify`'s own shape for it -- `\\sin\\left( x \\righ
 rules here: `\\cos\\left( \\frac{\\pi x}{2} \\right)`, `e^{-\\frac{x^{2}}{2}}`. A function
 `Latexify` names with a plain word is set upright as an operator, `\\operatorname{sign}`,
 using LaTeX's own command where there is one: `\\max`, `\\min`. A derivative is always in
-fraction form, `\\frac{\\mathrm{d} \\sin\\left( x \\right)}{\\mathrm{d}x}` or
-`\\frac{\\mathrm{d}^{2} f}{\\mathrm{d}x^{2}}`: the operator form `\\frac{\\mathrm{d}}{\\mathrm{d}x} u v`
-would read as the derivative of the whole product.
+fraction form, `\\frac{d \\sin\\left( x \\right)}{dx}` or `\\frac{d^{2} f}{dx^{2}}`: the operator
+form `\\frac{d}{dx} u v` would read as the derivative of the whole product. The `d` is italic,
+as calculus texts write it, rather than `Latexify`'s upright `\\mathrm{d}`.
 
 # Complex numbers
 

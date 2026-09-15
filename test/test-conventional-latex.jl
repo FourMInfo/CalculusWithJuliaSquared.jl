@@ -407,20 +407,23 @@ end
     # was tried first and the book replay caught it: inside a product it reads
     # `\frac{d}{dx} u(x) v(x)` -- the derivative OF uv -- in the very section teaching the
     # product rule. A derivative factor also follows the plain functions it multiplies, as
-    # the prose puts it: "u times the derivative of v".
-    @test cl(Differential(x)(sin(x)))     == "\\frac{\\mathrm{d} \\sin\\left( x \\right)}{\\mathrm{d}x}"
-    @test cl(Differential(x)(x^2 + 1))    == "\\frac{\\mathrm{d} \\left( x^{2} + 1 \\right)}{\\mathrm{d}x}"
-    @test cl((Differential(x)^2)(sin(x))) == "\\frac{\\mathrm{d}^{2} \\sin\\left( x \\right)}{\\mathrm{d}x^{2}}"
+    # the prose puts it: "u times the derivative of v". The `d` is ITALIC, as US calculus texts
+    # and this book's own prose write it (110 italic `\frac{dy}{dx}`-style uses, no upright
+    # one); Latexify's upright `\mathrm{d}` is the ISO 80000-2 convention, which would also
+    # want an upright e and i, and sat jarringly under the prose.
+    @test cl(Differential(x)(sin(x)))     == "\\frac{d \\sin\\left( x \\right)}{dx}"
+    @test cl(Differential(x)(x^2 + 1))    == "\\frac{d \\left( x^{2} + 1 \\right)}{dx}"
+    @test cl((Differential(x)^2)(sin(x))) == "\\frac{d^{2} \\sin\\left( x \\right)}{dx^{2}}"
     let (u, v) = (@variables u(..) v(..))
         prod_rule = cl(expand_derivatives(Differential(x)(u(x) * v(x))))
-        @test occursin("u\\left( x \\right) \\frac{\\mathrm{d} v\\left( x \\right)}{\\mathrm{d}x}", prod_rule)
-        @test occursin("v\\left( x \\right) \\frac{\\mathrm{d} u\\left( x \\right)}{\\mathrm{d}x}", prod_rule)
-        @test !occursin("{\\mathrm{d}x} u", prod_rule) && !occursin("{\\mathrm{d}x} v", prod_rule)
+        @test occursin("u\\left( x \\right) \\frac{d v\\left( x \\right)}{dx}", prod_rule)
+        @test occursin("v\\left( x \\right) \\frac{d u\\left( x \\right)}{dx}", prod_rule)
+        @test !occursin("{dx} u", prod_rule) && !occursin("{dx} v", prod_rule)
         # expand_derivatives gives `-u v'/v^2 + u'/v` here, not one fraction
         quot_rule = cl(expand_derivatives(Differential(x)(u(x) / v(x))))
-        @test occursin("u\\left( x \\right) \\frac{\\mathrm{d} v\\left( x \\right)}{\\mathrm{d}x}", quot_rule)
-        @test occursin("\\frac{\\mathrm{d} u\\left( x \\right)}{\\mathrm{d}x}", quot_rule)
-        @test !occursin("{\\mathrm{d}x} u", quot_rule) && !occursin("{\\mathrm{d}x} v", quot_rule)
+        @test occursin("u\\left( x \\right) \\frac{d v\\left( x \\right)}{dx}", quot_rule)
+        @test occursin("\\frac{d u\\left( x \\right)}{dx}", quot_rule)
+        @test !occursin("{dx} u", quot_rule) && !occursin("{dx} v", quot_rule)
     end
 
     # ---- 10. symbol names typeset as mathematics, not as code ---------------------------
