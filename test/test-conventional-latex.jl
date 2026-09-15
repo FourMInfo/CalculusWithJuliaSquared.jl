@@ -66,8 +66,9 @@ end
     @test conventional_latex(b^2 - 4c)   == "b^{2} - 4 c"
     @test conventional_latex(x^3 - x + 1) == "x^{3} - x + 1"
 
-    # A constant always lands last, whatever order the tree holds it in.
-    for ex in (x - 1, 1 - x, x^2 - 3, 5 + x^2)
+    # A constant lands last, whatever order the tree holds it in. `1 - x` left this list in
+    # v0.15.0: a two-term sum no longer leads with a minus, so it now renders `1 - x`.
+    for ex in (x - 1, x^2 - 3, 5 + x^2)
         @test !startswith(conventional_latex(ex), "-1 ")
         @test !occursin(r"^-?\d+ [+-] ", conventional_latex(ex))
     end
@@ -197,14 +198,14 @@ function _no_double_superscript(s)
     true
 end
 
-# Run `f` with the session's variable letters replaced, restoring the default whatever
-# happens -- a failure here must not leak a changed setting into every later test.
-function _with_variables(f, vars...)
-    set_conventional_variables(vars...)
+# Run `f` with the session defaults changed, restoring them whatever happens -- a failure
+# here must not leak a changed setting into every later test.
+function _with_default(f; kw...)
+    set_conventional_default(; kw...)
     try
         f()
     finally
-        reset_conventional_variables()
+        reset_conventional_default()
     end
 end
 
@@ -305,15 +306,18 @@ end
     @test Set(cl.(symbolic_solve(x^2 + 2x + 5, x))) == Set(["-1 + 2 i", "-1 - 2 i"])
     @test Set(cl.(symbolic_solve(x^3 - 1, x)))      ==
           Set(["1", "-\\frac{1}{2} + \\frac{\\sqrt{3}}{2} i", "-\\frac{1}{2} - \\frac{\\sqrt{3}}{2} i"])
+    # Cardano's coefficients arrive as FLOATS (`0.0 + 0.5im`), and a float stays a float; what
+    # matters is that the unit survives, ends its term, and is not bracketed with its sign.
     let cardano2 = cl(symbolic_solve(x^3 + p*x + q, x)[2])
-        @test occursin(" i", cardano2)
-        @test !occursin("0.5", cardano2)
+        @test occursin(r" i( [+-] |$)", cardano2)
+        @test !occursin(r"\\left\( -?[0-9.]+ i \\right\)", cardano2)
     end
 
     # ---- 6. sums: degree in the VARIABLE letters, then total degree, then alphabetical --
     # Default variables n r t u v w x y z θ. Subscripted names are constants (exact match).
 
     @test cl(x - b*PI)                     == "x - \\pi b"
+    @test cl(a + PI)                       == "a + \\pi"        # v0.14.1: `\pi + a` -- π is a constant
     @test cl(3x^2 + 3h*x + h^2)            == "3 x^{2} + 3 h x + h^{2}"
     @test cl(simplify(expand(((x-h)^3 - x^3)/h))) == "-3 x^{2} + 3 h x - h^{2}"
     @test cl(expand(a*(x-E)^2 + b*(x-E) + c + F)) ==
@@ -334,13 +338,53 @@ end
     @test cl(expand((s - k)^2); variables = [:s])    == "s^{2} - 2 k s + k^{2}"
     @test cl(expand((s - k)^2))                      == "k^{2} - 2 k s + s^{2}"
 
-    # the session setting, read by conventional_latex AND by show
-    @test issetequal(get_conventional_variables(), [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta])
-    @test _with_variables(() -> conventional_latex(expand((s - k)^2)), s) == "s^{2} - 2 k s + k^{2}"
-    @test _with_variables(() -> sprint(show, MIME"text/latex"(), expand((s - k)^2)), :s) ==
+    # ---- two-term sums do not lead with a minus ------------------------------------------
+    # `1 - x` and `-x + 1` are one tree, so this is a rule about display, not about input.
+
+    @test cl(1 - x)              == "1 - x"
+    @test cl(1 - x^2)            == "1 - x^{2}"
+    @test cl(100 - 16t^2)        == "100 - 16 t^{2}"
+    @test cl(1 - r^(n + 1))      == "1 - r^{n + 1}"
+    @test cl(h - x)              == "h - x"
+    @test cl(-(1//2)*x + 1//2)   == "\\frac{1 - x}{2}"       # the swap happens before combining
+    # negative space: an all-negative pair, three or more terms, and a radical-only second
+    # term (the quadratic formula keeps `-b + \sqrt{...}`; `a + b i` keeps its real part first)
+    @test cl(-x - 1)             == "-x - 1"
+    @test cl(-x^2 + 2x - 1)      == "-x^{2} + 2 x - 1"
+    @test cl(x - 1)              == "x - 1"
+
+    # ---- the order option: descending by default, ascending on request ------------------
+
+    @test cl(1 + x + x^2/2)                          == "\\frac{x^{2}}{2} + x + 1"
+    @test cl(1 + x + x^2/2; order = :ascending)      == "1 + x + \\frac{x^{2}}{2}"
+    @test cl(Symbolics.taylor(exp(x), x, 0:3); order = :ascending) ==
+          "1 + x + \\frac{x^{2}}{2} + \\frac{x^{3}}{6}"
+    @test cl(1 + x + x^2/2; order = :descending)     == "\\frac{x^{2}}{2} + x + 1"
+    @test_throws ArgumentError conventional_latex(x + 1; order = :sideways)
+
+    # ---- the session defaults, read by conventional_latex AND by show ---------------------
+
+    const_default_vars = [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta]
+    @test issetequal(get_conventional_default().variables, const_default_vars)
+    @test get_conventional_default().order == :descending
+    @test _with_default(() -> conventional_latex(expand((s - k)^2)); variables = [s]) ==
+          "s^{2} - 2 k s + k^{2}"
+    @test _with_default(() -> sprint(show, MIME"text/latex"(), expand((s - k)^2)); variables = [:s]) ==
           "\\[ s^{2} - 2 k s + k^{2} \\]"
-    @test _with_variables(() -> get_conventional_variables(), s, t) == [:s, :t]
-    @test issetequal(get_conventional_variables(), [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta])
+    @test _with_default(() -> sprint(show, MIME"text/latex"(), 1 + x + x^2/2); order = :ascending) ==
+          "\\[ 1 + x + \\frac{x^{2}}{2} \\]"
+    @test _with_default(() -> get_conventional_default().variables; variables = [s, t]) == [:s, :t]
+    # setting one option leaves the other alone, as Latexify's `set_default` does
+    @test _with_default(; variables = [s]) do
+        set_conventional_default(; order = :ascending)
+        get_conventional_default()
+    end == (variables = [:s], order = :ascending)
+    # a keyword still wins over the session default, for that call only
+    @test _with_default(() -> conventional_latex(1 + x; order = :descending); order = :ascending) == "x + 1"
+    @test_throws ArgumentError set_conventional_default(; colour = :red)
+    # and everything is back to the default afterwards
+    @test issetequal(get_conventional_default().variables, const_default_vars)
+    @test get_conventional_default().order == :descending
 
     # ---- 7. show goes through conventional_latex ---------------------------------------
 
@@ -359,7 +403,10 @@ end
     @test cl(sign(x))                 == "\\operatorname{sign}\\left( x \\right)"
     @test cl(max(x, y))               == "\\max\\left( x, y \\right)"
     @test cl(min(x, y))               == "\\min\\left( x, y \\right)"
-    @test cl(Differential(x)(sin(x))) == "\\frac{\\mathrm{d} \\sin\\left( x \\right)}{\\mathrm{d}x}"
+    # Latexify's shape for `Differential` depends on its argument; ours is the head's, the
+    # operator form, for every argument.
+    @test cl(Differential(x)(sin(x))) == "\\frac{\\mathrm{d}}{\\mathrm{d}x} \\sin\\left( x \\right)"
+    @test cl(Differential(x)(x^2 + 1)) == "\\frac{\\mathrm{d}}{\\mathrm{d}x} \\left( x^{2} + 1 \\right)"
 
     # ---- 10. symbol names typeset as mathematics, not as code ---------------------------
     # Latexify sets every multi-character name in typewriter: `\mathtt{x0}`, `\mathtt{theta}`.
