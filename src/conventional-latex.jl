@@ -208,6 +208,16 @@ end
 
 _cl_isvariable(t, ctx) = (nm = _cl_symname(t)) !== nothing && nm in ctx.variables
 
+# The index of an array element as a sortable key (`""` for anything else), so `xs[2]` and
+# `xs[10]` order numerically. Without it every element of one array ties on its name alone
+# -- the book replay found the Lagrange coefficients sorted by printed text instead.
+function _cl_index_key(t)
+    (_SU.iscall(t) && _SU.operation(t) === getindex) || return ""
+    join((let v = _cl_number(i)
+              v isa Integer ? lpad(string(v), 12, '0') : string(i)
+          end for i in _SU.arguments(t)[2:end]), ",")
+end
+
 # ---------------------------------------------------------------------------------
 # names
 #
@@ -331,7 +341,7 @@ function _cl_signature(t)
     if !_SU.iscall(t) || _SU.operation(t) === getindex
         nm = _cl_symname(t)
         nm === nothing && return ()
-        return ((lowercase(string(nm)), string(nm), -1//1),)
+        return ((lowercase(string(nm)), string(nm) * "\0" * _cl_index_key(t), -1//1),)
     end
     op, args = _SU.operation(t), _SU.arguments(t)
     if op === (^)
@@ -409,6 +419,9 @@ const _CL_HEAD_RANK = Dict{Any, Int}(
     log => 23, Symbolics.slog => 23, log2 => 24, log10 => 25)
 
 const _CL_HEAD_UNRANKED = 50
+# A derivative follows the functions it multiplies: `u(x) \frac{d v(x)}{dx}`, "u times the
+# derivative of v".
+const _CL_HEAD_DERIVATIVE = 60
 
 # The ordering key for the factors of a product: numbers, constants, letters (the
 # variables after the rest, each group alphabetically), bracketed sums, functions. Total,
@@ -420,9 +433,11 @@ function _cl_factor_key(a, ctx)
     v !== nothing && return (v isa Irrational ? 1 : 0, 0, "", "", s)
     if (!_SU.iscall(a) || _SU.operation(a) === getindex ||
         (_SU.operation(a) === (^) && _cl_symname(_SU.arguments(a)[1]) !== nothing))
-        nm = _cl_symname(_SU.iscall(a) && _SU.operation(a) === (^) ? _SU.arguments(a)[1] : a)
+        b = _SU.iscall(a) && _SU.operation(a) === (^) ? _SU.arguments(a)[1] : a
+        nm = _cl_symname(b)
         if nm !== nothing
-            return (2, nm in ctx.variables ? 1 : 0, lowercase(string(nm)), string(nm), s)
+            return (2, nm in ctx.variables ? 1 : 0, lowercase(string(nm)),
+                    string(nm) * "\0" * _cl_index_key(b), s)
         end
     end
     _SU.iscall(a) || return (4, _CL_HEAD_UNRANKED, "", "", s)
@@ -431,7 +446,7 @@ function _cl_factor_key(a, ctx)
     f = op === (^) && _SU.iscall(args[1]) ? args[1] : a
     fop = _SU.operation(f)
     fop === (+) && return (3, 0, "", "", s)
-    rank = get(_CL_HEAD_RANK, fop, _CL_HEAD_UNRANKED)
+    rank = fop isa Symbolics.Differential ? _CL_HEAD_DERIVATIVE : get(_CL_HEAD_RANK, fop, _CL_HEAD_UNRANKED)
     argkey = join((lpad(length(string(x)), 4, '0') * string(x) for x in _SU.arguments(f)), "|")
     (4, rank, rank == _CL_HEAD_UNRANKED ? string(fop) : "", argkey, s)
 end
@@ -565,7 +580,7 @@ end
 function _cl_pow_string(base, ex, ctx)
     if _SU.iscall(base)
         op, args = _SU.operation(base), _SU.arguments(base)
-        if !(op in (+, *, /, ^, getindex)) && !_cl_isroot(op)
+        if !(op in (+, *, /, ^, getindex)) && !_cl_isroot(op) && !(op isa Symbolics.Differential)
             # a function takes Latexify's shape for its power: `\sin^{2}\left( x \right)`
             tpl = _cl_template(op, length(args), true)
             tpl === nothing || return _cl_fill(tpl, [args..., ex], ctx)
@@ -797,6 +812,19 @@ function _cl_parts(t, prec::Int, ctx)
         return (false, "\\log\\left( $(_cl_render(args[1], _PREC_SUM, ctx)) \\right)", "")
     end
 
+    # --- derivative ---------------------------------------------------------
+    # Always the fraction form. `Latexify` switches between `\frac{d f}{dx}` and the operator
+    # form `\frac{d}{dx} f` depending on the argument, and the operator form is ambiguous in
+    # a product: `\frac{d}{dx} u(x) v(x)` reads as the derivative OF uv (caught by the book
+    # replay, in the product-rule section).
+    if op isa Symbolics.Differential
+        n = op.order
+        xv = _cl_render(Symbolics.unwrap(op.x), _PREC_SUM, ctx)
+        num = isone(n) ? "\\mathrm{d}" : "\\mathrm{d}^{$n}"
+        den = isone(n) ? "\\mathrm{d}$xv" : "\\mathrm{d}$(xv)^{$n}"
+        return (false, "\\frac{$num $(_cl_render(args[1], _PREC_PROD, ctx))}{$den}", "")
+    end
+
     # --- any other function: Latexify's shape, our arguments ------------------
     tpl = _cl_template(op, length(args), false)
     tpl === nothing || return (false, _cl_fill(tpl, args, ctx), "")
@@ -923,9 +951,10 @@ Numbers, then constants (`\\pi`, `\\sqrt{2}`), then letters alphabetically with 
 after the rest, then bracketed sums, then functions: `3 h x`, `2 \\pi x`, `a E^{2}`,
 `2 x \\left( x - 1 \\right) \\left( x - 2 \\right)`, `x^{2} e^{x}`. Functions go in textbook
 order -- radicals and absolute values, exponentials, `sin cos tan cot sec csc`, inverse
-trigonometric, hyperbolic, logarithms, then any other alphabetically -- so `2 \\sin x \\cos x`
-and `e^{x} \\sin x`. The same function twice goes simpler argument first:
-`\\sin\\left( x \\right) \\sin\\left( 2 x \\right)`.
+trigonometric, hyperbolic, logarithms, then any other alphabetically, and derivatives last --
+so `2 \\sin x \\cos x`, `e^{x} \\sin x` and `u\\left( x \\right) \\frac{\\mathrm{d} v\\left( x \\right)}{\\mathrm{d}x}`.
+The same function twice goes simpler argument first: `\\sin\\left( x \\right) \\sin\\left( 2 x \\right)`.
+Elements of an array go by name, then index: `\\mathit{xs}_{0} \\mathit{xs}_{1}`.
 
 # Powers
 
@@ -940,7 +969,10 @@ A function is typeset in `Latexify`'s own shape for it -- `\\sin\\left( x \\righ
 `\\left|x\\right|`, `\\log_{10}\\left( x \\right)` -- with its arguments typeset by all of the
 rules here: `\\cos\\left( \\frac{\\pi x}{2} \\right)`, `e^{-\\frac{x^{2}}{2}}`. A function
 `Latexify` names with a plain word is set upright as an operator, `\\operatorname{sign}`,
-using LaTeX's own command where there is one: `\\max`, `\\min`.
+using LaTeX's own command where there is one: `\\max`, `\\min`. A derivative is always in
+fraction form, `\\frac{\\mathrm{d} \\sin\\left( x \\right)}{\\mathrm{d}x}` or
+`\\frac{\\mathrm{d}^{2} f}{\\mathrm{d}x^{2}}`: the operator form `\\frac{\\mathrm{d}}{\\mathrm{d}x} u v`
+would read as the derivative of the whole product.
 
 # Complex numbers
 

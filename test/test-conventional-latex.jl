@@ -403,10 +403,25 @@ end
     @test cl(sign(x))                 == "\\operatorname{sign}\\left( x \\right)"
     @test cl(max(x, y))               == "\\max\\left( x, y \\right)"
     @test cl(min(x, y))               == "\\min\\left( x, y \\right)"
-    # Latexify's shape for `Differential` depends on its argument; ours is the head's, the
-    # operator form, for every argument.
-    @test cl(Differential(x)(sin(x))) == "\\frac{\\mathrm{d}}{\\mathrm{d}x} \\sin\\left( x \\right)"
-    @test cl(Differential(x)(x^2 + 1)) == "\\frac{\\mathrm{d}}{\\mathrm{d}x} \\left( x^{2} + 1 \\right)"
+    # A derivative is written in FRACTION form, always. The operator form `\frac{d}{dx} u(x)`
+    # was tried first and the book replay caught it: inside a product it reads
+    # `\frac{d}{dx} u(x) v(x)` -- the derivative OF uv -- in the very section teaching the
+    # product rule. A derivative factor also follows the plain functions it multiplies, as
+    # the prose puts it: "u times the derivative of v".
+    @test cl(Differential(x)(sin(x)))     == "\\frac{\\mathrm{d} \\sin\\left( x \\right)}{\\mathrm{d}x}"
+    @test cl(Differential(x)(x^2 + 1))    == "\\frac{\\mathrm{d} \\left( x^{2} + 1 \\right)}{\\mathrm{d}x}"
+    @test cl((Differential(x)^2)(sin(x))) == "\\frac{\\mathrm{d}^{2} \\sin\\left( x \\right)}{\\mathrm{d}x^{2}}"
+    let (u, v) = (@variables u(..) v(..))
+        prod_rule = cl(expand_derivatives(Differential(x)(u(x) * v(x))))
+        @test occursin("u\\left( x \\right) \\frac{\\mathrm{d} v\\left( x \\right)}{\\mathrm{d}x}", prod_rule)
+        @test occursin("v\\left( x \\right) \\frac{\\mathrm{d} u\\left( x \\right)}{\\mathrm{d}x}", prod_rule)
+        @test !occursin("{\\mathrm{d}x} u", prod_rule) && !occursin("{\\mathrm{d}x} v", prod_rule)
+        # expand_derivatives gives `-u v'/v^2 + u'/v` here, not one fraction
+        quot_rule = cl(expand_derivatives(Differential(x)(u(x) / v(x))))
+        @test occursin("u\\left( x \\right) \\frac{\\mathrm{d} v\\left( x \\right)}{\\mathrm{d}x}", quot_rule)
+        @test occursin("\\frac{\\mathrm{d} u\\left( x \\right)}{\\mathrm{d}x}", quot_rule)
+        @test !occursin("{\\mathrm{d}x} u", quot_rule) && !occursin("{\\mathrm{d}x} v", quot_rule)
+    end
 
     # ---- 10. symbol names typeset as mathematics, not as code ---------------------------
     # Latexify sets every multi-character name in typewriter: `\mathtt{x0}`, `\mathtt{theta}`.
@@ -424,6 +439,15 @@ end
     @test cl(x_alpha) == "x_{\\alpha}"
     @test cl(r*theta) == "r \\theta"                  # both default variables
     @test cl(xs[1])   == "\\mathit{xs}_{1}"           # array elements: published in polynomials_package
+
+    # Array elements order by name AND index. The book replay caught the index being ignored:
+    # polynomials_package's Lagrange coefficients tied on `xs`/`ys`, fell to the printed-text
+    # tiebreak, and came out with every negative term first.
+    @variables ys[0:2]
+    @test cl(xs[1]*xs[0])      == "\\mathit{xs}_{0} \\mathit{xs}_{1}"
+    @test cl(xs[2]^2 * xs[0])  == "\\mathit{xs}_{0} \\mathit{xs}_{2}^{2}"
+    @test cl(xs[0]*ys[1] - xs[0]*ys[2] - xs[1]*ys[0] + xs[1]*ys[2]) ==
+          "\\mathit{xs}_{0} \\mathit{ys}_{1} - \\mathit{xs}_{0} \\mathit{ys}_{2} - \\mathit{xs}_{1} \\mathit{ys}_{0} + \\mathit{xs}_{1} \\mathit{ys}_{2}"
 
     # ---- the ordering stays DETERMINISTIC -----------------------------------------------
     # Rebuild each expression every time; sorting a cached tree would test nothing.
