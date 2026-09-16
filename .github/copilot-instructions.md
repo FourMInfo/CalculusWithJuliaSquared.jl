@@ -31,9 +31,41 @@ a limit route, a value. Order: open the PR → re-render **every** published cha
 `CalculusWithJuliaSquaredNotes.jl` against the branch while the PR is under review → push any
 fix to the PR → merge on the go-ahead. Full, not scoped to the cells you reason are affected:
 v0.15.0 changed the display of every symbolic cell, which only a full render shows. The
-procedure (environment swap, render, cell-by-cell diff, restore) lives in that repo's
-`.github/instructions/porting.instructions.md` → "Render the book against a CWJS branch while
-its PR is open"; it runs from that repo's local `_research/scripts/`.
+procedure (environment swap, render, cell-by-cell diff, whole-book scan for untypeset output,
+restore) lives in that repo's `.github/instructions/porting.instructions.md` → "Render the book
+against a CWJS branch while its PR is open"; it runs from that repo's local `_research/scripts/`.
+
+**Scope a release from every chapter it will serve — the current chapter PR's and the next
+one's — and from what their readers will *see*, not only what they compute.** Aron,
+2026-09-16: do the CWJS work before the chapter work so no chapter is written twice, and check
+the next PR's chapters too. How: that repo's `porting.instructions.md` → "Inventory what the
+reader SEES".
+
+## Tests for new API: the value AND what the reader sees
+
+**A function that returns symbolic output is not done when its value is right; it is done when
+that value displays as mathematics.** On a Quarto page only a `text/html` method typesets
+(`text/latex` does not beat `text/plain`), and this package's `show` methods cover a scalar
+`Num` and the `symbolic_solve` vector — not a `Vector{Num}`, a `Tuple`, or a raw
+`BasicSymbolic`. So every new exported function gets a display test on its actual return
+value, e.g. `@test occursin("\\[", repr(MIME("text/html"), result))`, or a test pinning a
+deliberate plain-text display with the reason. Measured failure: `poly_factors` and
+`exact_trig_values` (v0.13.0) were tested for values only; both return a `Vector{Num}`, and
+`trig_functions` published `sqrt(3) / 2` in plain text from 2026-09-08 until a review found it
+on 2026-09-16, through a full-book replay that only diffed changes.
+
+## Type piracy: prove the method does not already exist
+
+Every piracy here must pass the module docstring's *benign test* (see "Cautions" in
+`src/CalculusWithJuliaSquared.jl`): each call it answers would otherwise have **thrown**.
+Establish that by running the call and by looking for an existing method on the exact
+signature — `methods(f)` filtered to the types, or `which(f, (T1, T2))` — before writing one.
+A package that redefines another module's method fails to precompile with *"Method overwriting
+is not permitted during Module precompilation."* — and Julia then loads it uncached with the
+overwrite in effect, so that error is a stop sign, not a guard. Measured 2026-09-16 with a probe
+package: `Base.div(::Num, ::Num)` precompiles (the call throws today), but
+`Base.rem(::Num, ::Num)` already exists in SymbolicUtils (a symbolic, unevaluated `rem`), so it
+cannot be pirated.
 
 **After every version bump here, re-pin EVERY consumer — enumerated from disk, never from a
 remembered list.** The set grows as book chapter groups are published (each carries its own
