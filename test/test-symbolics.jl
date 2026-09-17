@@ -139,8 +139,8 @@ end
     @test !occursin("BasicSymbolic", tex)
     @test occursin("-2", html) && occursin("2", html)
 
-    # deliberately NOT widened to `Vector{Num}`: that is what `Symbolics.gradient`
-    # returns, and published chapters already render it the default way.
-    @test !showable(MIME("text/html"), Symbolics.gradient(x^2 * y, [x, y]))
+    # v0.11.0 deliberately did NOT widen this to `Vector{Num}`; v0.16.0 does (a published
+    # page showed `sqrt(3) / 2`). The vector and matrix cases live in `test-display.jl`.
+    @test showable(MIME("text/html"), Symbolics.gradient(x^2 * y, [x, y]))
 
 end

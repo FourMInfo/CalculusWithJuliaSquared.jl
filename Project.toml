@@ -1,6 +1,6 @@
 name = "CalculusWithJuliaSquared"
 uuid = "f826098b-d57e-4440-b91e-2a05d35c24ae"
-version = "0.15.0"
+version = "0.16.0"
 
 [deps]
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -43,7 +43,7 @@ SpecialFunctions = "1, 2"
 SplitApplyCombine = "1"
 SymbolicLimits = "1"
 Symbolics = "7"
-julia = "1.10"
+julia = "1.13"
 
 [extras]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"

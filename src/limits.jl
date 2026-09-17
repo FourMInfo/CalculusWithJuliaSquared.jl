@@ -912,14 +912,51 @@ function _diverges(side, L, R)
     (ev !== nothing && ev[1] === :diverges) ? ev[2] : nothing
 end
 
+# What `symlim` returns. It was a plain `(value, route)` tuple until v0.16.0, and it still
+# behaves as one -- index, destructure, compare with `==` -- but a tuple can only be
+# typeset when it holds an expression, and 44 of the 49 limit results on published pages
+# hold a number, `Inf` or `nothing` (measured 2026-09-17). A type of our own displays every
+# result the same way without widening the piracy on `Tuple`. The routes still pass plain
+# tuples to one another; only the public `symlim` wraps.
+"""
+    SymlimResult
+
+What [`symlim`](@ref) returns: a limit's `value` and the `route` that found it.
+
+It behaves as the tuple `(value, route)` it replaced: `r[1]`, `r[2]`, `v, route = r`,
+`first`, `last` and `length` work, `r == (1//1, :series)` compares as the tuple does, and
+it prints as the tuple. In a notebook or rendered page it is typeset, route included.
+`Tuple(r)` gives the plain tuple.
+"""
+struct SymlimResult
+    value::Any
+    route::Symbol
+end
+
+Base.Tuple(r::SymlimResult) = (r.value, r.route)
+Base.length(::SymlimResult) = 2
+Base.firstindex(::SymlimResult) = 1
+Base.lastindex(::SymlimResult) = 2
+Base.getindex(r::SymlimResult, i::Integer) = Tuple(r)[i]
+Base.iterate(r::SymlimResult, i::Int = 1) = i > 2 ? nothing : (Tuple(r)[i], i + 1)
+Base.:(==)(a::SymlimResult, b::SymlimResult) = Tuple(a) == Tuple(b)
+Base.:(==)(r::SymlimResult, t::Tuple) = Tuple(r) == t
+Base.:(==)(t::Tuple, r::SymlimResult) = t == Tuple(r)
+Base.isequal(a::SymlimResult, b::SymlimResult) = isequal(Tuple(a), Tuple(b))
+Base.isequal(r::SymlimResult, t::Tuple) = isequal(Tuple(r), t)
+Base.isequal(t::Tuple, r::SymlimResult) = isequal(t, Tuple(r))
+Base.hash(r::SymlimResult, h::UInt) = hash(Tuple(r), h)
+Base.show(io::IO, r::SymlimResult) = show(io, Tuple(r))
+
 """
     symlim(ex, v, c; side = :both, cancel = true, check = true, n = 8, secs = 10)
 
 Symbolic limit of the expression `ex` as the variable `v` approaches `c`.
 
 Returns `(value, route)`, where `route` names the method that produced the
-answer. A `value` of `nothing` means every method declined — an honest refusal
-rather than a guess.
+answer, as a [`SymlimResult`](@ref), which behaves as that tuple and is typeset in a
+notebook or rendered page. A `value` of `nothing` means every method declined — an
+honest refusal rather than a guess.
 
 # Routes, in the order they are tried
 
@@ -1089,7 +1126,7 @@ function symlim(ex, v, c; side = :both, cancel = true, check = true, n = 8, secs
             throw(ArgumentError("the limit point must be a real number or ±Inf; got $(repr(c))"))
         c = isinteger(y) && abs(y) < 1e15 ? Int(y) : y
     end
-    _symlim(ex, v, c, cancel, check, n, secs, side)
+    SymlimResult(_symlim(ex, v, c, cancel, check, n, secs, side)...)
 end
 
 function _symlim(ex, v, c, cancel, check, n, secs, side, depth = 0)

@@ -202,3 +202,73 @@ end
     end
 
 end
+
+# Equal at three exact rational points (positive: a symbolic exponent has no real value at a
+# negative base). `simplify_fractions(a - b)` is NOT a proof of equality: it left
+# `(x - 2) \frac{29}{x - 2}` uncancelled for two equal expressions (measured 2026-09-16).
+function _equal_at_rationals(a, b, vars)
+    for vals in ([7//3, 5//11, 2//7], [4//9, 13//5, 3//8], [11//2, 1//13, 9//4])
+        sub = Dict(v => vals[i] for (i, v) in enumerate(vars))
+        va = Symbolics.value(substitute(a, sub; fold = Val(true)))
+        vb = Symbolics.value(substitute(b, sub; fold = Val(true)))
+        (va isa Number && vb isa Number) || return false
+        exact = va isa Union{Integer, Rational} && vb isa Union{Integer, Rational}
+        (exact ? va == vb : isapprox(va, vb; rtol = 1e-12)) || return false
+    end
+    true
+end
+
+@testset "combine_fractions (v0.16.0)" begin
+
+    @variables x a y n
+    cl = conventional_latex
+
+    # The prototype's cases (2026-09-16), displayed with v0.16.0's layout. Each result must
+    # equal its input at exact rational points and display as mathematics.
+    cases = [
+        (x^3 + 2x^2 + 6x + 12 + 29/(x - 2), [x], "\\frac{x^{4} + 2 x^{2} + 5}{x - 2}"),
+        (partial_fractions(((x-1)*(x-2)) / ((x-3)^3 * (x^2 - x - 1)), x), [x],     # PR2's, recombined
+            "\\frac{x^{2} - 3 x + 2}{\\left( x - 3 \\right)^{3} \\left( x^{2} - x - 1 \\right)}"),
+        (1/(x - 1) - 1/(x + 1) - 2/(x^2 - 1), [x], "0"),
+        (1/(2x + 1) + 1, [x], "\\frac{2 x + 2}{2 x + 1}"),                  # no monic fractions
+        (x/2 + 1/(3x), [x], "\\frac{3 x^{2} + 2}{6 x}"),                    # fractions cleared from both halves
+        (a*x + 1/(x - a), [x, a], "\\frac{a x^{2} - a^{2} x + 1}{x - a}"),
+        ((x^2 - a^2)/(x - a) + 1, [x, a], "x + a + 1"),                     # cancels through a parameter
+        (1/x + 1/y, [x, y], "\\frac{x + y}{x y}"),
+        ((1/x + 1)/(1/x - 1), [x], "-\\frac{x + 1}{x - 1}"),
+        (sin(x) + 1/(x + 1), [x], "\\frac{x \\sin\\left( x \\right) + \\sin\\left( x \\right) + 1}{x + 1}"),
+        (sin(x)/(sin(x)^2 - 1) + 1/(sin(x) + 1), [x],                         # cancels through an atom
+            "\\frac{2 \\sin\\left( x \\right) - 1}{\\left( \\sin\\left( x \\right) - 1 \\right) " *
+            "\\left( \\sin\\left( x \\right) + 1 \\right)}"),
+        (x + PI/(x - 1), [x], "\\frac{x^{2} - x + \\pi}{x - 1}"),
+        ((x - 1)*(x + 1)/(x + 2), [x], "\\frac{x^{2} - 1}{x + 2}"),
+        (x + 1, [x], "x + 1"),
+        # documented limits: atoms are independent, so `√2² = 2` is not used, and Symbolics
+        # does not merge `x x^{n}`
+        ((x^2 - 2)/(x - sqrt(Symbolics.Num(2))), [x], "\\frac{x^{2} - 2}{x - \\sqrt{2}}"),
+        (x^n + 1/x, [x, n], "\\frac{x x^{n} + 1}{x}"),
+    ]
+    for (ex, vars, shown) in cases
+        g = combine_fractions(ex)
+        @test cl(g) == shown
+        @test _equal_at_rationals(ex, g, vars)
+        @test occursin("\\[", repr(MIME("text/html"), g))
+    end
+
+    # ---- a bigger decomposition: seven terms back to one fraction, factored ----------
+    big = (x^7 + 1)/((x - 1)^4 * (x^2 + 1)^2 * (x + 2))
+    pf = partial_fractions(big, x)
+    @test length(Symbolics.SymbolicUtils.arguments(Symbolics.value(pf))) == 7
+    g = combine_fractions(pf)
+    @test cl(g) == "\\frac{x^{7} + 1}{\\left( x + 2 \\right) \\left( x - 1 \\right)^{4} " *
+                   "\\left( x^{2} + 1 \\right)^{2}}"
+    @test _equal_at_rationals(big, g, [x])
+    @test (@elapsed combine_fractions(pf)) < 5
+
+    # ---- exact input only, as partial_fractions ------------------------------------
+    @test_throws ArgumentError combine_fractions(0.5x + 1/x)
+    @test cl(combine_fractions(2.0x + 1/x)) == "\\frac{2 x^{2} + 1}{x}"      # integer-valued: exact
+    @test isequal(combine_fractions(Symbolics.Num(3)), Symbolics.Num(3))
+
+    @test :combine_fractions in names(CalculusWithJuliaSquared)
+end
