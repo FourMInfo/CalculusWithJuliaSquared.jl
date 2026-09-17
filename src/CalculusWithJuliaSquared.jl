@@ -362,7 +362,7 @@ export lim, symlim, tlim
 export tangent, secant, D, sign_chart, SignChart
 export riemann, fubini
 export divergence, gradient, curl, ∇, uvec
-export exact_trig_values, factored_poly, poly_factors, partial_fractions
+export exact_trig_values, factored_poly, poly_factors, partial_fractions, combine_fractions, poly_rem
 export numeric_roots, root_enclosures
 export conventional_latex, set_conventional_default, get_conventional_default, reset_conventional_default
 

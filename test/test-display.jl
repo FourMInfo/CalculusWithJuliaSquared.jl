@@ -177,6 +177,8 @@ end
         :curl              => () -> curl([x*y, y^2, x*z], [x, y, z]),
         :∇                 => () -> ∇(x^2 * y),
         :gradient          => () -> gradient(x^2 * y, [x, y]),   # a method on an imported name
+        :combine_fractions => () -> combine_fractions(1/x + 1/y),
+        :poly_rem          => () -> poly_rem(x^2 + 1, x - 1),
     )
     for (name, call) in symbolic
         @testset "$name" begin

@@ -222,3 +222,35 @@ end
     @test divrem(7, 2) == (3, 1)
     @test divrem(7.5, 2) == (3.0, 1.5)
 end
+
+@testset "div, ÷ and poly_rem on polynomials (v0.16.0)" begin
+
+    @variables x y
+
+    # ---- the prose these exist for: polynomial_roots says "the quotient could be found
+    # with `div` or `÷` and the remainder with `rem`". `rem(::Num, ::Num)` already exists
+    # in SymbolicUtils (an unevaluated call) and cannot be pirated, hence `poly_rem`.
+    a, b = 5x^3 + 6x^2 + 2, x - 1
+    q, r = divrem(a, b)
+    @test isequal(div(a, b), q)
+    @test isequal(a ÷ b, q)
+    @test isequal(poly_rem(a, b), r)
+    @test isequal(poly_rem(a, b), Symbolics.Num(13))
+    # the chapter's worked example: x^5 - x + 1 = (x^3 + x^2 - 1)(x^2 - x + 1) + (-2x + 2)
+    @test isequal(div(x^5 - x + 1, x^2 - x + 1), x^3 + x^2 - 1)
+    @test isequal(poly_rem(x^5 - x + 1, x^2 - x + 1), 2 - 2x)
+    @test occursin("\\[", repr(MIME("text/html"), div(a, b)))
+    @test occursin("\\[", repr(MIME("text/html"), poly_rem(a, b)))
+
+    # ---- the same refusals as divrem ------------------------------------------------
+    @test_throws DivideError div(x^2, 0*x)
+    @test_throws DivideError poly_rem(x^2, 0*x)
+    @test_throws ArgumentError div(x^2 * y, x - 1)
+    @test_throws ArgumentError poly_rem(0.5x^2, x - 1)
+
+    # ---- the piracy stays narrow ---------------------------------------------------
+    @test div(7, 2) == 3 && 7 ÷ 2 == 3 && div(7.5, 2) == 3.0
+    @test which(div, (Num, Num)).module === CalculusWithJuliaSquared
+    @test which(rem, (Num, Num)).module !== CalculusWithJuliaSquared     # untouched: cannot be pirated
+    @test :poly_rem in names(CalculusWithJuliaSquared)
+end
