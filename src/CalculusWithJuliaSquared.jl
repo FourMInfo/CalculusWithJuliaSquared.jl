@@ -244,9 +244,7 @@ which Quarto renders literally. There is no effect in the plain-text REPL, which
 """
 Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
     print(io, "\\[ ", conventional_latex(x), " \\]")
-Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) =
-    print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
-          conventional_latex(x), " \\]</span>")
+Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) = _html_math(io, conventional_latex(x))
 
 # `symbolic_solve` returns a `Vector` of raw `BasicSymbolic`, which otherwise prints with
 # its full type name -- `Vector{SymbolicUtils.BasicSymbolicImpl.var"typeof(BasicSymbolicImpl)"
@@ -268,9 +266,75 @@ _solutions_latex(xs) = "\\left[\n\\begin{array}{c}\n" *
 
 Base.show(io::IO, ::MIME"text/latex", xs::_SymbolicSolutions) =
     print(io, "\\[ ", _solutions_latex(xs), " \\]")
-Base.show(io::IO, ::MIME"text/html", xs::_SymbolicSolutions) =
+Base.show(io::IO, ::MIME"text/html", xs::_SymbolicSolutions) = _html_math(io, _solutions_latex(xs))
+
+# The HTML wrapper every display here uses: display math, left-aligned as a cell output.
+_html_math(io::IO, latex::AbstractString) =
     print(io, "<span class=\"math-left-align\" style=\"padding-left:4px;width:0;float:left;\">\\[ ",
-          _solutions_latex(xs), " \\]</span>")
+          latex, " \\]</span>")
+
+# ---------------------------------------------------------------------------------
+# Every other container a reader meets (v0.16.0)
+#
+# A Quarto page typesets a value only if it has a `text/html` method: `text/latex` does
+# NOT beat `text/plain` there. So a `Vector{Num}` from `poly_factors`, a tuple from
+# `divrem`, a single root taken out of a solution set and a `symlim` result all printed as
+# Julia syntax -- a published page showed `sqrt(3) / 2` for eight days. These methods add
+# `text/html` ONLY: Symbolics already owns `text/latex` for `Vector{Num}`, `Matrix{Num}`
+# and `BasicSymbolic` (SymbolicsLatexifyExt), and redefining it would overwrite that
+# method, which fails precompilation. Nothing had `text/html` before (measured), so each
+# passes the module docstring's benign test.
+# ---------------------------------------------------------------------------------
+
+# \mathtt needs these characters escaped; a route such as `:parameter_dependent` has one.
+_tt(s::AbstractString) = "\\mathtt{" *
+    replace(s, "\\" => "\\backslash ", "_" => "\\_", "{" => "\\{", "}" => "\\}", "#" => "\\#",
+            "\$" => "\\\$", "%" => "\\%", "&" => "\\&", "~" => "\\sim ", "^" => "\\hat{}") * "}"
+
+# One element of a displayed tuple: mathematics as mathematics, anything else as code,
+# so a route reads exactly as a reader would type it. `Bool <: Real`, hence first.
+_element_latex(v::Symbolics.Num) = conventional_latex(v)
+_element_latex(v::Symbolics.SymbolicUtils.BasicSymbolic) = conventional_latex(Symbolics.Num(v))
+_element_latex(v::Bool) = _tt(string(v))
+_element_latex(v::Symbol) = _tt(repr(v))
+_element_latex(::Nothing) = _tt("nothing")
+_element_latex(r::SymlimResult) = _tuple_latex(Tuple(r))
+# `conventional_latex` writes the letters `Inf`, which in math mode read as I·n·f.
+_element_latex(v::Real) = isinf(v) ? (v > 0 ? "\\infty" : "-\\infty") : conventional_latex(Symbolics.Num(v))
+_element_latex(v) = _tt(repr(v))
+
+_tuple_latex(t) = "\\left( " * join((_element_latex(v) for v in t), ",\\ ") * " \\right)"
+
+# A single root taken out of `symbolic_solve`'s vector, or anything computed from one, is
+# an unwrapped `BasicSymbolic`, and so is what `tlim` returns.
+Base.show(io::IO, ::MIME"text/html", x::Symbolics.SymbolicUtils.BasicSymbolic) =
+    _html_math(io, conventional_latex(Symbolics.Num(x)))
+
+# Exactly `Vector{Num}` and `Matrix{Num}`, never `AbstractVector{<:Num}`: a symbolic array
+# VARIABLE (`@variables zs[1:3]`) is an `AbstractVector{Num}` too, and it is a declaration,
+# not a result. Arrays of three or more dimensions stay plain -- revisit when one can reach
+# a reader (as of 2026-09-17 none can).
+Base.show(io::IO, ::MIME"text/html", xs::Vector{Symbolics.Num}) = _html_math(io, _solutions_latex(xs))
+
+function _matrix_latex(A)
+    rows = (join((conventional_latex(a) for a in r), " & ") * " \\\\\n" for r in eachrow(A))
+    "\\left[\n\\begin{array}{" * "c"^size(A, 2) * "}\n" * join(rows) * "\\end{array}\n\\right]"
+end
+Base.show(io::IO, ::MIME"text/html", A::Matrix{Symbolics.Num}) = _html_math(io, _matrix_latex(A))
+
+# A tuple typesets when it holds a symbolic value, or a `symlim` result, in any of its
+# first 16 positions. Dispatch cannot say "somewhere in the tuple", only "in position k",
+# hence the union; 16 measured free (no ambiguities, under a microsecond per `showable`).
+# A tuple with nothing symbolic in it -- `(1, 2)`, plot options -- has no `text/html`
+# method, so it keeps Julia's display.
+const _DisplayedElement = Union{Symbolics.Num, Symbolics.SymbolicUtils.BasicSymbolic, SymlimResult}
+const _TUPLE_POSITIONS = 16
+const _SymbolicTuple = Union{(Tuple{ntuple(_ -> Any, k - 1)..., _DisplayedElement, Vararg{Any}}
+                              for k in 1:_TUPLE_POSITIONS)...}
+Base.show(io::IO, ::MIME"text/html", t::_SymbolicTuple) = _html_math(io, _tuple_latex(t))
+
+# Our own type, so no piracy at all: every limit result typesets, whatever its value.
+Base.show(io::IO, ::MIME"text/html", r::SymlimResult) = _html_math(io, _tuple_latex(Tuple(r)))
 
 # auto-configure plotting for headless vs interactive use
 # (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
