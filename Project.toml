@@ -43,7 +43,7 @@ SpecialFunctions = "1, 2"
 SplitApplyCombine = "1"
 SymbolicLimits = "1"
 Symbolics = "7"
-julia = "1.10"
+julia = "1.13"
 
 [extras]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
