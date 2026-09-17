@@ -549,6 +549,11 @@ end
     @test cl(N(Symbolics.unwrap(x) * 0.3im)) == "0.3 x i"
     @test cl(N(Symbolics.unwrap(x) * 0.5im)) == "\\frac{x}{2} i"
 
+    # ---- X2 (replay, 2026-09-17): a float with an exponent is not `e-15` in math mode ----
+    @test cl(substitute(11x - 15, Dict(x => 15/11))) == "-1.7763568394002505 \\times 10^{-15}"
+    @test cl(2.5e10 * x) == "2.5 \\times 10^{10} x"
+    @test cl(0.5x) == "0.5 x"                                  # no exponent: unchanged
+
     # ---- L6: partial fractions grouped by factor (L3 order), powers ascending ----------
     pf6 = partial_fractions((x^2 + 2)/((x-1)*(x^2+1)^2), x)
     @test cl(pf6) ==

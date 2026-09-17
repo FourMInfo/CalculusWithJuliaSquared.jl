@@ -153,6 +153,13 @@ end
           "\\left( \\frac{1}{4},\\ \\mathtt{:reciprocal} \\right)"
     @test occursin("5 x^{4},\\ \\mathtt{:", _body(symlim(((x + h)^5 - x^5)/h, h, 0)))
 
+    # X1 (replay, 2026-09-17): a vector of results -- `[symlim(...) for k in 1:3]` on
+    # limits_extensions -- printed `Vector{CalculusWithJuliaSquared.SymlimResult}` as text
+    rs = [symlim(sin(x)/x, x, 0), symlim(1/x, x, 0)]
+    @test rs isa Vector{CalculusWithJuliaSquared.SymlimResult}
+    @test _body(rs) == "\\left[\n\\begin{array}{c}\n\\left( 1,\\ \\mathtt{:series} \\right) \\\\\n" *
+                       "\\left( \\mathtt{nothing},\\ \\mathtt{:sides\\_disagree} \\right) \\\\\n\\end{array}\n\\right]"
+
     # two results side by side, as the `floor` example in `symlim`'s docstring shows them
     both = (symlim(floor(x), x, 0; side = :right), symlim(floor(x), x, 0; side = :left))
     @test _body(both) == "\\left( \\left( 0,\\ \\mathtt{:substitution} \\right),\\ " *

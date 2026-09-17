@@ -686,7 +686,13 @@ function _cl_parts(t, prec::Int, ctx)
             s = "$(_cl_real_latex(re)) $(im < 0 ? "-" : "+") $(_cl_imag_latex(abs(im)))"
             return (false, prec >= _PREC_PROD ? _cl_paren(s) : s, "")
         end
-        return (v isa Real && v < 0, string(abs(v)), "")
+        # X2: `1.7763568394002505e-15` in math mode reads as "e minus 15"; write the power of ten
+        str = string(abs(v))
+        if v isa AbstractFloat && occursin('e', str)
+            m, ex = split(str, 'e')
+            str = "$m \\times 10^{$(parse(Int, ex))}"
+        end
+        return (v isa Real && v < 0, str, "")
     end
 
     # --- symbol ---------------------------------------------------------------

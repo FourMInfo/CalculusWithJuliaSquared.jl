@@ -359,6 +359,11 @@ Base.show(io::IO, ::MIME"text/html", t::_SymbolicTuple) = _html_math(io, _tuple_
 
 # Our own type, so no piracy at all: every limit result typesets, whatever its value.
 Base.show(io::IO, ::MIME"text/html", r::SymlimResult) = _html_math(io, _tuple_latex(Tuple(r)))
+# ...and a vector of them, a column like any other vector of results (X1: the book's
+# `[symlim(...) for k in 1:3]` printed the internal type name). Still our own type.
+Base.show(io::IO, ::MIME"text/html", rs::AbstractVector{SymlimResult}) =
+    _html_math(io, "\\left[\n\\begin{array}{c}\n" *
+               join(_tuple_latex(Tuple(r)) * " \\\\\n" for r in rs) * "\\end{array}\n\\right]")
 
 # auto-configure plotting for headless vs interactive use
 # (see the julia-coding-conventions skill, "CI / Headless Plotting Detection")
