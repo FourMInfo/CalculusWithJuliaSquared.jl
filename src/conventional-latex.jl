@@ -53,6 +53,8 @@ const _PREC_POWER = 3   # the base of a power: a sum or a product does
 
 const _CL_DEFAULT_VARIABLES = Symbol[:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta]
 const _CL_ORDERS = (:descending, :ascending)
+const _CL_FACTOR_ORDERS = (:roots, :degree)
+const _CL_PF_POWERS = (:ascending, :descending)
 const _CL_SETTINGS = Dict{Symbol, Any}()
 const _CL_SETTINGS_LOCK = ReentrantLock()
 
@@ -67,6 +69,18 @@ _cl_varnames(vs) = Symbol[_cl_name(v) for v in vs]
 function _cl_check_order(o)
     o in _CL_ORDERS ||
         throw(ArgumentError("`order` must be :descending or :ascending, got $(repr(o))"))
+    o
+end
+
+function _cl_check_factor_order(o)
+    o in _CL_FACTOR_ORDERS ||
+        throw(ArgumentError("`factor_order` must be :roots or :degree, got $(repr(o))"))
+    o
+end
+
+function _cl_check_pf_powers(o)
+    o in _CL_PF_POWERS ||
+        throw(ArgumentError("`partial_fraction_powers` must be :ascending or :descending, got $(repr(o))"))
     o
 end
 
@@ -108,9 +122,14 @@ function set_conventional_default(; kwargs...)
             new[:variables] = _cl_varnames(v)
         elseif k === :order
             new[:order] = _cl_check_order(v)
+        elseif k === :factor_order
+            new[:factor_order] = _cl_check_factor_order(v)
+        elseif k === :partial_fraction_powers
+            new[:partial_fraction_powers] = _cl_check_pf_powers(v)
         else
             throw(ArgumentError(
-                "unknown option `$k`: `set_conventional_default` accepts `variables` and `order`"))
+                "unknown option `$k`: `set_conventional_default` accepts `variables`, `order`, " *
+                "`factor_order` and `partial_fraction_powers`"))
         end
     end
     lock(() -> merge!(_CL_SETTINGS, new), _CL_SETTINGS_LOCK)
@@ -130,8 +149,10 @@ The defaults [`conventional_latex`](@ref) and symbolic display currently use, as
 See [`set_conventional_default`](@ref) and [`reset_conventional_default`](@ref).
 """
 get_conventional_default() = lock(_CL_SETTINGS_LOCK) do
-    (variables = copy(get(_CL_SETTINGS, :variables, _CL_DEFAULT_VARIABLES)),
-     order     = get(_CL_SETTINGS, :order, :descending))
+    (variables               = copy(get(_CL_SETTINGS, :variables, _CL_DEFAULT_VARIABLES)),
+     order                   = get(_CL_SETTINGS, :order, :descending),
+     factor_order            = get(_CL_SETTINGS, :factor_order, :roots),
+     partial_fraction_powers = get(_CL_SETTINGS, :partial_fraction_powers, :ascending))
 end
 
 """
@@ -149,6 +170,8 @@ end
 struct _CLContext
     variables::Set{Symbol}
     ascending::Bool
+    factor_degree::Bool        # L3: `factor_order = :degree`
+    pf_descending::Bool        # L6: `partial_fraction_powers = :descending`
 end
 
 # ---------------------------------------------------------------------------------
@@ -428,6 +451,13 @@ const _CL_HEAD_DERIVATIVE = 60
 # for the same reason as `_cl_sortkey`. Two calls of one head go simpler argument first,
 # `\sin(x) \sin(2 x)`, measured by the length of the argument as printed.
 function _cl_factor_key(a, ctx)
+    # `1/u` and `(1/u)^n` in a denominator sort as `u` would (L3)
+    u = _cl_unit_reciprocal(a)
+    u === nothing || return _cl_factor_key(u, ctx)
+    if _SU.iscall(a) && _SU.operation(a) === (^)
+        u = _cl_unit_reciprocal(_SU.arguments(a)[1])
+        u === nothing || return _cl_factor_key(u, ctx)
+    end
     s = string(a)
     v = _cl_number(a)
     v !== nothing && return (v isa Irrational ? 1 : 0, 0, "", "", s)
@@ -445,7 +475,7 @@ function _cl_factor_key(a, ctx)
     op, args = _SU.operation(a), _SU.arguments(a)
     f = op === (^) && _SU.iscall(args[1]) ? args[1] : a
     fop = _SU.operation(f)
-    fop === (+) && return (3, 0, "", "", s)
+    fop === (+) && return (3, _cl_sum_factor_key(f, ctx), "", "", s)
     rank = fop isa Symbolics.Differential ? _CL_HEAD_DERIVATIVE : get(_CL_HEAD_RANK, fop, _CL_HEAD_UNRANKED)
     argkey = join((lpad(length(string(x)), 4, '0') * string(x) for x in _SU.arguments(f)), "|")
     (4, rank, rank == _CL_HEAD_UNRANKED ? string(fop) : "", argkey, s)
@@ -479,7 +509,7 @@ const _CL_LATEX_OPERATORS = Set(["max", "min", "sup", "inf", "gcd", "det", "deg"
 # reads as the product s·i·g·n) and sets others `\mathrm{arccot}`. Either way, an operator
 # name is written upright with operator spacing.
 function _cl_operator_names(s::AbstractString)
-    m = match(r"^(?:\\mathrm\{([A-Za-z][A-Za-z0-9]+)\}|([A-Za-z][A-Za-z0-9]+))(?=\\left|\^|_)", s)
+    m = match(r"^(?:\\math(?:rm|tt)\{([A-Za-z][A-Za-z0-9]*(?:\\_[A-Za-z0-9]+)*)\}|([A-Za-z][A-Za-z0-9]+))(?=\\left|\^|_)", s)
     m === nothing && return s
     w = something(m[1], m[2])
     (w in _CL_LATEX_OPERATORS ? "\\" * w : "\\operatorname{$w}") * s[length(m.match) + 1:end]
@@ -645,7 +675,7 @@ function _cl_parts(t, prec::Int, ctx)
         if v isa Complex
             # `abs` of a complex number is its MODULUS: taking it here, as v0.14.1 did,
             # printed `i` as `1.0` and `-1 + 2i` as `2.236...`. Split the parts instead.
-            re, im = real(v), imag(v)
+            re, im = _cl_half(real(v)), _cl_half(imag(v))
             iszero(im) && return _cl_parts(re, prec, ctx)
             iszero(re) && return (im < 0, _cl_imag_latex(abs(im)), "")
             s = "$(_cl_real_latex(re)) $(im < 0 ? "-" : "+") $(_cl_imag_latex(abs(im)))"
@@ -675,86 +705,11 @@ function _cl_parts(t, prec::Int, ctx)
     end
 
     # --- sum ------------------------------------------------------------------
-    if op === (+)
-        terms = sort(collect(args); by = a -> _cl_sortkey(a, ctx))
-        parts = [_cl_parts(a, _PREC_SUM, ctx) for a in terms]
-
-        # A sum of two terms does not open with a minus: `1 - x`, not `-x + 1`. Not when
-        # the second term is radical-only, which keeps its conventional place last
-        # (`-b + \sqrt{...}`, and the real part of `a + b i` first).
-        if length(parts) == 2 && parts[1][1] && !parts[2][1] && !_cl_isradicalterm(terms[2])
-            parts = parts[[2, 1]]
-        end
-
-        # If every term is a fraction over the SAME denominator, write one fraction.
-        # Requiring *every* term to share it is what keeps `1/(3(x+2)) + 2/(3(x-1))`
-        # apart -- those denominators differ -- and keeps `x + 1/2` from becoming
-        # `(2x + 1)/2`, which is not how anyone writes it.
-        den1 = parts[1][3]
-        if !isempty(den1) && all(p -> p[3] == den1, parts)
-            io = IOBuffer()
-            print(io, parts[1][1] ? "-" : "", parts[1][2])
-            for p in parts[2:end]
-                print(io, p[1] ? " - " : " + ", p[2])
-            end
-            return (false, String(take!(io)), den1)
-        end
-
-        io = IOBuffer()
-        n1, b1 = _cl_join(parts[1])
-        print(io, n1 ? "-" : "", b1)
-        for p in parts[2:end]
-            n, b = _cl_join(p)
-            print(io, n ? " - " : " + ", b)
-        end
-        s = String(take!(io))
-        return (false, prec >= _PREC_PROD ? _cl_paren(s) : s, "")
-    end
+    op === (+) && return _cl_sum_parts(t, prec, ctx)
 
     # --- product --------------------------------------------------------------
     if op === (*)
-        coeff = Rational{BigInt}(1)
-        imaginary = false
-        rest, dens = Any[], Any[]
-        for a in args
-            c = _cl_rational(a)
-            if c !== nothing
-                coeff *= c
-                continue
-            end
-            m = _cl_imaginary(a)
-            if m !== nothing
-                if m isa Union{Integer, Rational}
-                    coeff *= Rational{BigInt}(m)
-                else                                      # a float stays a float
-                    m < 0 && (coeff = -coeff)
-                    isone(abs(m)) || push!(rest, abs(m))
-                end
-                imaginary && (coeff = -coeff)             # i * i
-                imaginary = !imaginary
-                continue
-            end
-            f = _cl_number(a)
-            if f isa AbstractFloat && f < 0
-                coeff = -coeff
-                push!(rest, -f)
-                continue
-            end
-            _cl_denominator_factor(a, ctx) === nothing ? push!(rest, a) : push!(dens, a)
-        end
-        neg = _cl_isneg(coeff)
-        coeff = abs(coeff)
-        p, q = numerator(coeff), denominator(coeff)
-
-        sort!(rest; by = a -> _cl_factor_key(a, ctx))
-        sort!(dens; by = a -> _cl_factor_key(a, ctx))
-        factors = join((_cl_render(a, _PREC_PROD, ctx) for a in rest), " ")
-        num = isempty(rest) ? string(p) : (isone(p) ? factors : "$p $factors")
-        denparts = String[]
-        isone(q) || push!(denparts, string(q))
-        append!(denparts, (_cl_denominator_factor(a, ctx) for a in dens))
-        den = join(denparts, " ")
-
+        neg, num, den, imaginary = _cl_product_parts(args, ctx)
         if imaginary
             # THE unit goes outside the fraction: `\frac{\sqrt{3}}{2} i`.
             body = isempty(den) ? (num == "1" ? "i" : "$num i") : "\\frac{$num}{$den} i"
@@ -780,8 +735,19 @@ function _cl_parts(t, prec::Int, ctx)
             den = q == 1 ? _cl_render(de, _PREC_SUM, ctx) : "$q $(_cl_render(de, _PREC_PROD, ctx))"
             return (neg, string(p), den)
         end
-        nneg, nbody = _cl_join(_cl_parts(nu, _PREC_SUM, ctx))
-        return (nneg, nbody, _cl_render(de, _PREC_SUM, ctx))
+        # L8 (v0.16.0): when BOTH halves lead with a minus -- judged by the highest-degree
+        # term, so `1 - x` leads with `-x` -- negate both: `\frac{x - 1}{x + 1}`, not
+        # `\frac{1 - x}{-x - 1}`. Only the string is negated; the tree is left alone.
+        flip = _cl_leads_negative(nu, ctx) && _cl_leads_negative(de, ctx)
+        # L2: a numerator whose every term is negative puts its minus in front.
+        nneg, nnum, nden = _cl_is_sum(nu) ?
+            _cl_sum_parts(nu, _PREC_SUM, ctx; negate = flip, front_minus = true) :
+            _cl_flipped(_cl_parts(nu, _PREC_SUM, ctx), flip)
+        isempty(nden) && return (nneg, nnum, _cl_render_signed(de, _PREC_SUM, ctx; negate = flip))
+        # L1: a numerator that is itself over a number -- partial fractions store
+        # `(-(1//25) + (2//25)*x) / (x^2 - x - 1)` -- merges that number into the outer
+        # denominator, as the rational-numerator case above always has.
+        return (nneg, nnum, "$nden $(_cl_render_signed(de, _PREC_PROD, ctx; negate = flip))")
     end
 
     # --- power ----------------------------------------------------------------
@@ -847,6 +813,253 @@ _cl_signed(t, prec::Int, ctx) = _cl_join(_cl_parts(t, prec, ctx))
 # Render `t` with its sign folded back in, bracketing if the context needs it.
 function _cl_render(t, prec::Int, ctx)
     neg, body = _cl_signed(t, prec, ctx)
+    neg || return body
+    prec >= _PREC_PROD ? _cl_paren("-" * body) : "-" * body
+end
+
+# ---------------------------------------------------------------------------------
+# sums, products and their signs (v0.16.0)
+# ---------------------------------------------------------------------------------
+
+_cl_is_sum(t) = _SU.iscall(t) && _SU.operation(t) === (+)
+_cl_flipped(p, flip::Bool) = flip ? (!p[1], p[2], p[3]) : p
+
+# L5: Cardano's complex coefficients arrive as floats (`0.0 + 0.5im`, measured). An exact
+# half of one is shown as the fraction it stands for; any other float stays a float, and
+# a REAL float is never touched (`0.5 x`, `cos(1.5707963267948966)` are what was computed).
+_cl_half(v) = v isa AbstractFloat && isinteger(2v) && !isinteger(v) ? Rational{BigInt}(BigInt(2v), 2) : v
+
+# `(negative, numerator, denominator, imaginary)` for the factors of a product, with the
+# imaginary unit NOT yet written, so a sum can collect imaginary terms (L5).
+function _cl_product_parts(args, ctx)
+    coeff = Rational{BigInt}(1)
+    imaginary = false
+    rest, dens = Any[], Any[]
+    for a in args
+        c = _cl_rational(a)
+        if c !== nothing
+            coeff *= c
+            continue
+        end
+        m = _cl_imaginary(a)
+        if m !== nothing
+            m = _cl_half(m)
+            if m isa Union{Integer, Rational}
+                coeff *= Rational{BigInt}(m)
+            else                                      # a float stays a float
+                m < 0 && (coeff = -coeff)
+                isone(abs(m)) || push!(rest, abs(m))
+            end
+            imaginary && (coeff = -coeff)             # i * i
+            imaginary = !imaginary
+            continue
+        end
+        f = _cl_number(a)
+        if f isa AbstractFloat && f < 0
+            coeff = -coeff
+            push!(rest, -f)
+            continue
+        end
+        _cl_denominator_factor(a, ctx) === nothing ? push!(rest, a) : push!(dens, a)
+    end
+    neg = _cl_isneg(coeff)
+    coeff = abs(coeff)
+    p, q = numerator(coeff), denominator(coeff)
+
+    # keys computed once each: an L3 key factors a polynomial, too dear to repeat per comparison
+    rest = rest[sortperm([_cl_factor_key(a, ctx) for a in rest])]
+    dens = dens[sortperm([_cl_factor_key(a, ctx) for a in dens])]
+    factors = join((_cl_render(a, _PREC_PROD, ctx) for a in rest), " ")
+    num = isempty(rest) ? string(p) : (isone(p) ? factors : "$p $factors")
+    denparts = String[]
+    isone(q) || push!(denparts, string(q))
+    append!(denparts, (_cl_denominator_factor(a, ctx) for a in dens))
+    (neg, num, join(denparts, " "), imaginary)
+end
+
+# A term's parts with its imaginary unit removed, or `nothing` if it is a real term.
+function _cl_imag_term(a, ctx)
+    m = _cl_imaginary(a)
+    if m !== nothing
+        m = _cl_half(m)
+        return (m < 0, isone(abs(m)) ? "1" : _cl_real_latex(abs(m)), "")
+    end
+    (_SU.iscall(a) && _SU.operation(a) === (*)) || return nothing
+    neg, num, den, imaginary = _cl_product_parts(_SU.arguments(a), ctx)
+    imaginary ? (neg, num, den) : nothing
+end
+
+# The rational coefficients of `t` as a polynomial in its ONE variable, lowest power first;
+# `nothing` for two symbols (`x - a`), a non-variable letter, or a non-rational coefficient.
+function _cl_univariate_coeffs(t, ctx)
+    vs = Symbolics.get_variables(t)
+    length(vs) == 1 || return nothing
+    v = only(vs)
+    _cl_isvariable(v, ctx) || return nothing
+    try
+        _rational_coeffs(Symbolics.Num(t), Symbolics.Num(v))
+    catch
+        nothing
+    end
+end
+
+# L3: where a bracketed sum goes among a product's factors. Lower degree first; under
+# `factor_order = :degree`, monic before the rest; then a linear factor with rational
+# coefficients by its root on the number line -- `(x + 3)(x + 1)(2x - 1)(x - 3)`, a sign
+# chart's order; then anything else (a symbolic root) by its printed form. Until v0.16.0
+# factors went by their stored text, an accident.
+function _cl_sum_factor_key(f, ctx)
+    cs = _cl_univariate_coeffs(f, ctx)
+    deg = cs === nothing ? _cl_vdegree(f, ctx) : _CLDeg(length(cs) - 1)
+    monic = cs !== nothing && isone(last(cs))
+    root = cs !== nothing && length(cs) == 2 ? -cs[1] / cs[2] : nothing
+    (deg, ctx.factor_degree && !monic ? 1 : 0, root === nothing ? 1 : 0,
+     root === nothing ? Rational{BigInt}(0) : root, string(f))
+end
+
+# L6: the factor and power of a partial-fraction term -- a numerator over a power of one
+# polynomial in one variable with rational coefficients -- else `nothing`.
+function _cl_pf_base(d, ctx)
+    if _SU.iscall(d) && _SU.operation(d) === (*)
+        others = [a for a in _SU.arguments(d) if _cl_number(a) === nothing]
+        length(others) == 1 || return nothing
+        d = only(others)
+    end
+    base, pw = d, 1
+    if _SU.iscall(d) && _SU.operation(d) === (^)
+        e = _cl_number(_SU.arguments(d)[2])
+        (e isa Integer && e > 0) || return nothing
+        base, pw = _SU.arguments(d)[1], Int(e)
+    end
+    (_cl_is_sum(base) || _cl_isvariable(base, ctx)) || return nothing
+    _cl_univariate_coeffs(base, ctx) === nothing && return nothing
+    (base, pw)
+end
+
+function _cl_pf_factor(t, ctx)
+    _SU.iscall(t) || return nothing
+    op, args = _SU.operation(t), _SU.arguments(t)
+    op === (/) && return _cl_pf_base(args[2], ctx)
+    op === (*) || return nothing
+    found = nothing
+    for a in args
+        u = _cl_unit_reciprocal(a)
+        pw = 1
+        if u === nothing && _SU.iscall(a) && _SU.operation(a) === (^)
+            u = _cl_unit_reciprocal(_SU.arguments(a)[1])
+            e = _cl_number(_SU.arguments(a)[2])
+            (e isa Integer && e > 0) || (u = nothing)
+            u === nothing || (pw = Int(e))
+        end
+        u === nothing && continue
+        found === nothing || return nothing           # two denominators: not one term
+        b = _cl_pf_base(u, ctx)
+        b === nothing && return nothing
+        found = (b[1], b[2] * pw)
+    end
+    found
+end
+
+# A sum's terms in display order, and whether they were grouped as partial fractions (L6).
+# Grouping needs at least one term over a polynomial factor, so a Laurent polynomial
+# (`x + 1 + \frac{1}{x}`) and a difference quotient (`\frac{1}{x + h} - \frac{1}{x}`, whose
+# factor holds a second symbol) keep the degree order. The polynomial part leads.
+function _cl_sorted_terms(t, ctx)
+    terms = collect(_SU.arguments(t))
+    terms = terms[sortperm([_cl_sortkey(a, ctx) for a in terms])]
+    pfs = [_cl_pf_factor(a, ctx) for a in terms]
+    any(p -> p !== nothing && _cl_is_sum(p[1]), pfs) || return (terms, false)
+    idx = findall(!isnothing, pfs)
+    s = ctx.pf_descending ? -1 : 1
+    keys = [(_cl_sum_factor_key(pfs[i][1], ctx), s * pfs[i][2], i) for i in idx]
+    poly = [terms[i] for i in eachindex(terms) if pfs[i] === nothing]
+    (vcat(poly, terms[idx[sortperm(keys)]]), true)
+end
+
+# L8: does `t` lead with a minus? For a sum, the highest-degree term decides, whatever
+# direction the sum is being written in.
+function _cl_leads_negative(t, ctx)
+    if _cl_is_sum(t)
+        desc = _CLContext(ctx.variables, false, ctx.factor_degree, ctx.pf_descending)
+        terms, _ = _cl_sorted_terms(t, desc)
+        return _cl_parts(first(terms), _PREC_SUM, ctx)[1]
+    end
+    _cl_parts(t, _PREC_SUM, ctx)[1]
+end
+
+# Two terms, the first negative and the second not: swap, so the pair does not open with a
+# minus.
+_cl_no_leading_minus(parts) =
+    length(parts) == 2 && parts[1][1] && !parts[2][1] ? parts[[2, 1]] : parts
+
+function _cl_join_terms(parts)
+    io = IOBuffer()
+    n1, b1 = _cl_join(parts[1])
+    print(io, n1 ? "-" : "", b1)
+    for p in parts[2:end]
+        n, b = _cl_join(p)
+        print(io, n ? " - " : " + ", b)
+    end
+    String(take!(io))
+end
+
+# A sum's `(negative, numerator, denominator)`. `negate` flips every term (L8);
+# `front_minus` lets an all-negative sum carry its minus outside (L2, numerators only).
+function _cl_sum_parts(t, prec::Int, ctx; negate::Bool = false, front_minus::Bool = false)
+    terms, grouped = _cl_sorted_terms(t, ctx)
+    parts = [_cl_flipped(_cl_parts(a, _PREC_SUM, ctx), negate) for a in terms]
+
+    # L5: two or more imaginary terms are written as ONE imaginary part after the real part,
+    # `a + \left( b + c \right) i`, each part a sum as a text writes it, fractions kept apart.
+    imag = [_cl_imag_term(a, ctx) for a in terms]
+    if count(!isnothing, imag) >= 2
+        re = [parts[i] for i in eachindex(terms) if imag[i] === nothing]
+        im = [_cl_flipped(imag[i], negate) for i in eachindex(terms) if imag[i] !== nothing]
+        inner = "\\left( " * _cl_join_terms(_cl_no_leading_minus(im)) * " \\right) i"
+        s = isempty(re) ? inner : _cl_join_terms(_cl_no_leading_minus(re)) * " + " * inner
+        return (false, prec >= _PREC_PROD ? _cl_paren(s) : s, "")
+    end
+
+    lead = false
+    if front_minus && all(p -> p[1], parts)
+        parts = [(false, p[2], p[3]) for p in parts]
+        lead = true
+    end
+
+    # A sum of two terms does not open with a minus: `1 - x`, not `-x + 1`. Not when the
+    # second term is radical-only and the first is not, which keeps a radical in its
+    # conventional place last (`-b + \sqrt{...}`, and the real part of `a + b i` first); two
+    # radicals do swap (L4). Not in a partial-fraction sum either, whose order is its
+    # factors' (L6): `-\frac{1}{x - 1} + \frac{1}{x - 2}`.
+    if !grouped && length(parts) == 2 && parts[1][1] && !parts[2][1] &&
+       (!_cl_isradicalterm(terms[2]) || _cl_isradicalterm(terms[1]))
+        parts = parts[[2, 1]]
+    end
+
+    # If every term is a fraction over the SAME denominator, write one fraction.
+    # Requiring *every* term to share it is what keeps `1/(3(x+2)) + 2/(3(x-1))`
+    # apart -- those denominators differ -- and keeps `x + 1/2` from becoming
+    # `(2x + 1)/2`, which is not how anyone writes it.
+    den1 = parts[1][3]
+    if !isempty(den1) && all(p -> p[3] == den1, parts)
+        io = IOBuffer()
+        print(io, parts[1][1] ? "-" : "", parts[1][2])
+        for p in parts[2:end]
+            print(io, p[1] ? " - " : " + ", p[2])
+        end
+        return (lead, String(take!(io)), den1)
+    end
+
+    s = _cl_join_terms(parts)
+    (lead, prec >= _PREC_PROD ? _cl_paren(s) : s, "")
+end
+
+# `_cl_render`, optionally with every term's sign flipped (L8).
+function _cl_render_signed(t, prec::Int, ctx; negate::Bool = false)
+    negate || return _cl_render(t, prec, ctx)
+    p = _cl_is_sum(t) ? _cl_sum_parts(t, prec, ctx; negate = true) :
+                        _cl_flipped(_cl_parts(t, prec, ctx), true)
+    neg, body = _cl_join(p)
     neg || return body
     prec >= _PREC_PROD ? _cl_paren("-" * body) : "-" * body
 end
@@ -1008,10 +1221,15 @@ would refuse to open as inline math. Any expression shape this does not recognis
 to `Latexify` unchanged, so an unfamiliar function renders as it always did rather than
 failing. A string is returned as it is.
 """
-function conventional_latex(ex; variables = nothing, order = nothing)
+function conventional_latex(ex; variables = nothing, order = nothing, factor_order = nothing,
+                            partial_fraction_powers = nothing)
     d = get_conventional_default()
     ctx = _CLContext(Set{Symbol}(variables === nothing ? d.variables : _cl_varnames(variables)),
-                     (order === nothing ? d.order : _cl_check_order(order)) === :ascending)
+                     (order === nothing ? d.order : _cl_check_order(order)) === :ascending,
+                     (factor_order === nothing ? d.factor_order :
+                         _cl_check_factor_order(factor_order)) === :degree,
+                     (partial_fraction_powers === nothing ? d.partial_fraction_powers :
+                         _cl_check_pf_powers(partial_fraction_powers)) === :descending)
     t = Symbolics.value(ex)
     neg, body = _cl_signed(t, _PREC_SUM, ctx)
     neg ? "-" * body : body

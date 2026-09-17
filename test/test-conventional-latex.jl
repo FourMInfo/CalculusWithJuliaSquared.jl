@@ -264,7 +264,8 @@ end
     @test cl(a*E^2)              == "a E^{2}"
     @test cl(k*x*t)              == "k t x"             # variables after other letters
     @test cl(sqrt(x)*a)          == "a \\sqrt{x}"       # a radical of a symbol is a function
-    @test cl((x+1)*(x-1)*a)      == "a \\left( x - 1 \\right) \\left( x + 1 \\right)"
+    # v0.16.0 (L3): linear factors by root on the number line, -1 before 1 -- was storage order
+    @test cl((x+1)*(x-1)*a)      == "a \\left( x + 1 \\right) \\left( x - 1 \\right)"
     @test cl((x+1)*sin(x))       == "\\left( x + 1 \\right) \\sin\\left( x \\right)"
     @test cl(factored_poly(2x^3 - 6x^2 + 4x, x)) ==
           "2 x \\left( x - 1 \\right) \\left( x - 2 \\right)"
@@ -306,8 +307,9 @@ end
     @test Set(cl.(symbolic_solve(x^2 + 2x + 5, x))) == Set(["-1 + 2 i", "-1 - 2 i"])
     @test Set(cl.(symbolic_solve(x^3 - 1, x)))      ==
           Set(["1", "-\\frac{1}{2} + \\frac{\\sqrt{3}}{2} i", "-\\frac{1}{2} - \\frac{\\sqrt{3}}{2} i"])
-    # Cardano's coefficients arrive as FLOATS (`0.0 + 0.5im`), and a float stays a float; what
-    # matters is that the unit survives, ends its term, and is not bracketed with its sign.
+    # Cardano's coefficients arrive as FLOATS (`0.0 + 0.5im`). What matters here is that the
+    # unit survives, ends its term, and is not bracketed with its sign. (Since v0.16.0 an
+    # exact half in a complex coefficient shows as a fraction -- see L5 below.)
     let cardano2 = cl(symbolic_solve(x^3 + p*x + q, x)[2])
         @test occursin(r" i( [+-] |$)", cardano2)
         @test !occursin(r"\\left\( -?[0-9.]+ i \\right\)", cardano2)
@@ -378,7 +380,8 @@ end
     @test _with_default(; variables = [s]) do
         set_conventional_default(; order = :ascending)
         get_conventional_default()
-    end == (variables = [:s], order = :ascending)
+    end == (variables = [:s], order = :ascending, factor_order = :roots,
+            partial_fraction_powers = :ascending)            # v0.16.0 added the last two
     # a keyword still wins over the session default, for that call only
     @test _with_default(() -> conventional_latex(1 + x; order = :descending); order = :ascending) == "x + 1"
     @test_throws ArgumentError set_conventional_default(; colour = :red)
@@ -469,5 +472,143 @@ end
         @test !startswith(out, " ")              # the Pandoc defect
         @test !occursin("~", out)                # Latexify's product separator
         @test !occursin("\\mathtt", out)         # names set as code
+    end
+end
+
+@testset "conventional display (v0.16.0)" begin
+
+    # The decisions of 2026-09-16 (round 1, L1-L8) and 2026-09-17. Expected strings are the
+    # chosen option panels, written in this renderer's own spacing; inputs are the chapters'.
+    @variables x a b c p q
+    outputs = String[]
+    cl(ex; kw...) = (out = conventional_latex(ex; kw...); push!(outputs, out); out)
+    N = Symbolics.Num
+
+    # ---- L1: a fraction in a numerator merges into the outer denominator ---------------
+    # partial fractions store rational coefficients inside the numerator's sum:
+    # `(-(1//25) + (2//25)*x) / (x^2 - x - 1)` rendered `\frac{\frac{2 x - 1}{25}}{...}`
+    pf1 = partial_fractions((x-1)*(x-2)/((x-3)^3*(x^2-x-1)), x)
+    @test cl(pf1) ==
+          "-\\frac{2}{25 \\left( x - 3 \\right)} + \\frac{1}{5 \\left( x - 3 \\right)^{2}} + " *
+          "\\frac{2}{5 \\left( x - 3 \\right)^{3}} + \\frac{2 x - 1}{25 \\left( x^{2} - x - 1 \\right)}"
+    # the merged form is what the same term already rendered when built another way
+    @test cl(((2//25)*x - 1//25)/(x^2 - x - 1)) == cl((2x - 1)/25/(x^2 - x - 1)) ==
+          "\\frac{2 x - 1}{25 \\left( x^{2} - x - 1 \\right)}"
+
+    # ---- L2: an all-negative numerator puts its minus in front -------------------------
+    @test cl(partial_fractions(1/((x^2+1)*(x-1)), x)) ==
+          "\\frac{1}{2 \\left( x - 1 \\right)} - \\frac{x + 1}{2 \\left( x^{2} + 1 \\right)}"
+    @test cl((-x - 1)/(x^2 + 1)) == "-\\frac{x + 1}{x^{2} + 1}"
+    # negative space: a mixed-sign numerator keeps its signs; the quadratic formula, a SUM
+    # of fractions over one bar, is not a numerator and keeps `-b - \sqrt{...}`
+    @test cl((1 - x)/(x + 1)) == "\\frac{1 - x}{x + 1}"
+    @test cl(-(1//2)*b - (1//2)*sqrt(b^2 - 4c)) == "\\frac{-b - \\sqrt{b^{2} - 4 c}}{2}"
+    @test cl(-x - 1) == "-x - 1"
+
+    # ---- L3: sum factors -- lower degree first, linear factors by root -----------------
+    quartic = factored_poly(2x^4 + x^3 - 19x^2 - 9x + 9, x)
+    @test cl(quartic) ==
+          "\\left( x + 3 \\right) \\left( x + 1 \\right) \\left( 2 x - 1 \\right) \\left( x - 3 \\right)"
+    @test cl(quartic; factor_order = :degree) ==           # monic first, then by root
+          "\\left( x + 3 \\right) \\left( x + 1 \\right) \\left( x - 3 \\right) \\left( 2 x - 1 \\right)"
+    quintic = factored_poly(expand((x-1)*(x-2)*(x^5-x-1)), x)
+    @test cl(quintic) == cl(quintic; factor_order = :degree) ==
+          "\\left( x - 1 \\right) \\left( x - 2 \\right) \\left( x^{5} - x - 1 \\right)"
+    @test cl(factored_poly(expand((x-1)^2*(x-3)*(x^2+1)), x)) ==     # a power sorts by its base
+          "\\left( x - 1 \\right)^{2} \\left( x - 3 \\right) \\left( x^{2} + 1 \\right)"
+    @test cl(1/((x-3)*(x+3))) == "\\frac{1}{\\left( x + 3 \\right) \\left( x - 3 \\right)}"
+    # a symbolic root has no place on the number line: it follows the numeric ones, stably
+    @test cl((x - a)*(x + 1)) == "\\left( x + 1 \\right) \\left( x - a \\right)"
+    @test length(Set(conventional_latex((x - a)*(x + 1)*(x - 2)) for _ in 1:20)) == 1
+    @test_throws ArgumentError conventional_latex(quartic; factor_order = :size)
+
+    # ---- L4: two radicals do not lead with a minus either ------------------------------
+    @test Set(cl.(N.(symbolic_solve(8x^4 - 8x^2 + 1 ~ 0, x)))) == Set([
+        "\\frac{\\sqrt{1 - \\frac{\\sqrt{2}}{2}} - \\sqrt{1 + \\frac{\\sqrt{2}}{2}}}{2}",
+        "\\frac{\\sqrt{1 + \\frac{\\sqrt{2}}{2}} - \\sqrt{1 - \\frac{\\sqrt{2}}{2}}}{2}",
+        "\\frac{\\sqrt{1 + \\frac{\\sqrt{2}}{2}} + \\sqrt{1 - \\frac{\\sqrt{2}}{2}}}{2}",
+        "\\frac{-\\sqrt{1 + \\frac{\\sqrt{2}}{2}} - \\sqrt{1 - \\frac{\\sqrt{2}}{2}}}{2}"])   # both negative: unchanged
+    # the quadratic formula keeps `-b + \sqrt{...}`: its second term is a radical, its first is not
+    @test cl(-(1//2)*b + (1//2)*sqrt(b^2 - 4c)) == "\\frac{-b + \\sqrt{b^{2} - 4 c}}{2}"
+
+    # ---- L5: Cardano -- real part, then the imaginary part as one bracket; exact halves ----
+    U = "\\sqrt[3]{-\\frac{q}{2} + \\sqrt{\\frac{p^{3}}{27} + \\frac{q^{2}}{4}}}"
+    V = "\\sqrt[3]{-\\frac{q}{2} - \\sqrt{\\frac{p^{3}}{27} + \\frac{q^{2}}{4}}}"
+    @test Set(cl.(N.(symbolic_solve(x^3 + p*x + q, x)))) == Set([
+        "$U + $V",
+        "-\\frac{$U}{2} - \\frac{$V}{2} + \\left( \\frac{\\sqrt{3} $U}{2} - \\frac{\\sqrt{3} $V}{2} \\right) i",
+        "-\\frac{$U}{2} - \\frac{$V}{2} + \\left( \\frac{\\sqrt{3} $V}{2} - \\frac{\\sqrt{3} $U}{2} \\right) i"])
+    # negative space: rational complex roots and a single imaginary term are as they were;
+    # a real float stays a float; a complex float that is not a half stays a float
+    @test Set(cl.(symbolic_solve(x^3 - 1, x))) ==
+          Set(["1", "-\\frac{1}{2} + \\frac{\\sqrt{3}}{2} i", "-\\frac{1}{2} - \\frac{\\sqrt{3}}{2} i"])
+    @test cl(0.5x) == "0.5 x"
+    @test cl(substitute(cos(x), Dict(x => pi/2))) == "\\cos\\left( 1.5707963267948966 \\right)"
+    # built as Cardano's terms are, a complex float times an unwrapped symbol; `(0.3im)*x`
+    # on a `Num` would build a `Complex{Num}` instead, a different shape altogether
+    @test cl(N(Symbolics.unwrap(x) * 0.3im)) == "0.3 x i"
+    @test cl(N(Symbolics.unwrap(x) * 0.5im)) == "\\frac{x}{2} i"
+
+    # ---- L6: partial fractions grouped by factor (L3 order), powers ascending ----------
+    pf6 = partial_fractions((x^2 + 2)/((x-1)*(x^2+1)^2), x)
+    @test cl(pf6) ==
+          "\\frac{3}{4 \\left( x - 1 \\right)} - \\frac{3 x + 3}{4 \\left( x^{2} + 1 \\right)} - " *
+          "\\frac{x + 1}{2 \\left( x^{2} + 1 \\right)^{2}}"
+    @test cl(pf6; partial_fraction_powers = :descending) ==
+          "\\frac{3}{4 \\left( x - 1 \\right)} - \\frac{x + 1}{2 \\left( x^{2} + 1 \\right)^{2}} - " *
+          "\\frac{3 x + 3}{4 \\left( x^{2} + 1 \\right)}"
+    @test cl(pf1; partial_fraction_powers = :descending) ==
+          "\\frac{2}{5 \\left( x - 3 \\right)^{3}} + \\frac{1}{5 \\left( x - 3 \\right)^{2}} - " *
+          "\\frac{2}{25 \\left( x - 3 \\right)} + \\frac{2 x - 1}{25 \\left( x^{2} - x - 1 \\right)}"
+    # the polynomial part leads (rational_functions: the prose's `40/(3x+9) + 2/(3x-9)`)
+    @test cl(partial_fractions((x^3 - 4x^2 + 5x - 2)/(x^2 - 9), x)) ==
+          "x - 4 + \\frac{40}{3 \\left( x + 3 \\right)} + \\frac{2}{3 \\left( x - 3 \\right)}"
+    # the factor order wins over the two-term rule: the template is A/(x - 1) + B/(x - 2)
+    @test cl(partial_fractions(1/((x-1)*(x-2)), x)) == "-\\frac{1}{x - 1} + \\frac{1}{x - 2}"
+    # negative space: a Laurent polynomial keeps v0.15.0's degree order, both directions
+    @test cl(x + 1 + 1/x + 1/x^2) == "x + 1 + \\frac{1}{x} + \\frac{1}{x^{2}}"
+    @test cl(x + 1 + 1/x + 1/x^2; order = :ascending) == "\\frac{1}{x^{2}} + \\frac{1}{x} + 1 + x"
+    @test_throws ArgumentError conventional_latex(pf6; partial_fraction_powers = :sideways)
+
+    # ---- L7: the unsolved-roots placeholder is an operator name ------------------------
+    @test cl(N(symbolic_solve(x^5 - x + 1 ~ 0, x)[1])) ==
+          "\\operatorname{roots\\_of}\\left( x^{5} - x + 1, x \\right)"
+
+    # ---- L8: both halves leading with a minus are negated ------------------------------
+    # "leading" is the highest-degree term, not the first character: `1 - x` leads with `-x`
+    @test cl(simplify_fractions((x^2 - 1)/(x^2 + 2x + 1))) == "\\frac{x - 1}{x + 1}"
+    @test cl((c - a*b)/(b - a^2)) == "\\frac{a b - c}{a^{2} - b}"        # no variables: total degree
+    # the published polynomials_package cell: under Symbolics 7.39.2 its second row stores both
+    # halves negated (measured 2026-09-17); neither half may display with a leading minus
+    @variables xs[0:2] ys[0:2]
+    X, Y = collect(xs), collect(ys)
+    abc = simplify.(symbolic_linear_solve([a*xi^2 + b*xi + c ~ yi for (xi, yi) in zip(X, Y)], [a, b, c]))
+    let m = match(r"^\\frac\{(.*)\}\{(.*)\}$", cl(abc[2]))
+        @test m !== nothing
+        @test !startswith(m.captures[1], "-") && !startswith(m.captures[2], "-")
+    end
+    # negative space: only one half negative is left alone
+    @test cl((1 - x)/(x + 1)) == "\\frac{1 - x}{x + 1}"
+    @test cl(-1/(x - 1)) == "-\\frac{1}{x - 1}"
+
+    # ---- the keywords as session defaults ---------------------------------------------
+    d = get_conventional_default()
+    @test d.factor_order === :roots && d.partial_fraction_powers === :ascending
+    @test _with_default(() -> conventional_latex(quartic); factor_order = :degree) ==
+          cl(quartic; factor_order = :degree)
+    @test occursin("\\left( x - 3 \\right) \\left( 2 x - 1 \\right)",
+                   _with_default(() -> repr(MIME("text/html"), quartic); factor_order = :degree))
+    @test _with_default(() -> conventional_latex(pf6); partial_fraction_powers = :descending) ==
+          cl(pf6; partial_fraction_powers = :descending)
+    @test_throws ArgumentError set_conventional_default(; factor_order = :size)
+    @test get_conventional_default() == d                 # a refused setting changed nothing
+
+    # ---- structural checks over everything above --------------------------------------
+    @test length(outputs) > 30
+    for out in outputs
+        @test _braces_balanced(out)
+        @test !occursin("\\frac{\\frac", out)            # L1: no fraction nested in a numerator
+        @test !occursin("0.5", out) || out == "0.5 x"     # L5: halves exact except a real float
+        @test !occursin("\\mathtt", out)
     end
 end
