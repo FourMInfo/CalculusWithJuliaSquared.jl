@@ -17,14 +17,18 @@ functions. The constant `e` is assigned to `exp(1)`.
 `factored_poly` and `poly_factors` (factoring over the rationals), and `partial_fractions`.
 These stand in for `SymPy`'s automatic special angles, `factor` and `apart`. Alongside them,
 `numeric_roots` and `root_enclosures` find roots exactly and report them as floats or as
-certified intervals, standing in for `N.(solve(...))` and `sympy.real_roots`; and `divrem`
-divides one polynomial by another.
+certified intervals, standing in for `N.(solve(...))` and `sympy.real_roots`. `divrem`, `div`
+(`÷`) and `poly_rem` divide one polynomial by another, and `combine_fractions` puts a sum over
+one fraction bar, standing in for `SymPy`'s `together`.
 
-* It displays symbolic expressions in conventional notation. `conventional_latex` typesets an
+* It displays symbolic mathematics in conventional notation. `conventional_latex` typesets an
 expression the way a mathematics text writes it -- term and factor order, fractions, powers,
-names -- and every symbolic expression displays through it in Quarto, Jupyter and Documenter.
+partial fractions, names -- and everything symbolic a reader meets displays through it in
+Quarto, Jupyter and Documenter: an expression, a vector or matrix of them, a tuple holding
+one, a single root taken from a solution set, and a `symlim` result.
 `set_conventional_default`, `get_conventional_default` and `reset_conventional_default`
-choose, for the session, which letters are the variables and which way a sum runs.
+choose, for the session, which letters are the variables, which way a sum runs, how the
+factors of a product are ordered and which way partial-fraction powers run.
 
 
 ## Packages loaded by `CalculusWithJuliaSquared`
@@ -40,7 +44,7 @@ choose, for the session, which letters are the variables and which way a sum run
 
 * The `Symbolics` package is loaded (and reexported) giving access to symbolic math (`@variables`, etc.) along with symbolic `gradient`, `divergence`, and `curl` methods -- pure Julia, no Python dependency.
 
-* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations, and also backs `factored_poly`, `poly_factors` and `partial_fractions`. The module name itself IS exported, so `Nemo.overlaps`, `Nemo.midpoint` and `Nemo.radius` are available for the balls `root_enclosures` returns; but no `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
+* The `Nemo` package is loaded -- imported, not reexported -- which switches on `Symbolics.symbolic_solve` for polynomial equations, and also backs `factored_poly`, `poly_factors`, `partial_fractions`, the polynomial division functions and `combine_fractions`. The module name itself IS exported, so `Nemo.overlaps`, `Nemo.midpoint` and `Nemo.radius` are available for the balls `root_enclosures` returns; but no `using Nemo` is needed downstream, and none of Nemo's own names (`derivative`, `coeff`, `roots`, ...) enter the namespace, where they would collide with Symbolics.
 
 * The `Plots` package is loaded (and reexported) providing the plotting interface directly -- no separate `using Plots` needed.
 
@@ -76,7 +80,7 @@ It matters because Julia's method tables are **global**: such a method is visibl
 package in the session, not only to code that calls into this one. Loading this package can
 therefore change how *unrelated* code behaves, which is why the practice is discouraged.
 
-This package commits it five times, each deliberately, and each passing the same test:
+This package commits it six times, each deliberately, and each passing the same test:
 
 > **The benign test.** Every call the pirated method answers is a call that would otherwise
 > have **thrown** — a `MethodError`, or an outright error. No working code changes its
@@ -84,25 +88,37 @@ This package commits it five times, each deliberately, and each passing the same
 > coupled packages that "separate features from definitions" is the ground these stand on.
 
 A piracy that changed the *result* of a call that already worked would not pass that test,
-and none of the five below does.
+and none of the six below does.
 
 | method | what it adds | without it |
 |:--|:--|:--|
 | `Base.adjoint` on a function | `f'` returns the derivative (inherited from upstream `CalculusWithJulia`) | `MethodError` |
-| `Base.show` for `Symbolics.Num`, and for the vector `symbolic_solve` returns | display math, so expressions typeset in Quarto, Documenter and Jupyter instead of printing internal type names | prints the type, not the mathematics |
+| `Base.show` for `Symbolics.Num` and the vector `symbolic_solve` returns (`text/latex` and `text/html`); and, `text/html` only, for a `Vector{Num}`, a `Matrix{Num}`, a single unwrapped expression (`BasicSymbolic`), and a tuple holding an expression in its first 16 positions | display math, so what a reader meets typesets in Quarto, Documenter and Jupyter instead of printing as Julia syntax or internal type names | plain text: the type, or Julia syntax such as `sqrt(3) / 2` |
 | `Roots.find_zero`, `find_zeros`, `ZeroProblem` on a symbolic expression or `~` equation | solving `find_zero(x^3 - x + 1, (-2, -1))` directly, mirroring the `SymPy` extension `Roots` already ships | `MethodError` |
 | `Base.divrem` on two `Symbolics.Num`s | Euclidean division of polynomials, `a = b*q + r` with `deg r < deg b` | `MethodError` |
+| `Base.div` on two `Symbolics.Num`s, and so `÷` | the quotient of that division | `MethodError` |
 | `Plots._show` for `text/html` on a `Plot{PlotlyBackend}` | emits the plot *body*, so an interactive Plotly figure appears inline in a rendered page (inherited from upstream's Plots extension) | errors: *"only png or svg allowed. got: :html"* |
 
-Three of these are worth a further word:
+A `symlim` result displays through a type of this package's own, `SymlimResult`, which is not
+piracy at all. Four of the six are worth a further word:
 
-  * **`divrem` is named, not renamed.** A `poly_divrem` of our own would have avoided the
-    piracy entirely. It is not used because the point being taught is that Julia's *generic*
-    `divrem` divides polynomials exactly as it divides integers; a bespoke name would state
-    the opposite.
+  * **`show` adds `text/html` only, where `Symbolics` already has `text/latex`.** A Quarto page
+    typesets a value only if it has a `text/html` method, which is why the containers needed
+    one; `Symbolics` already has `text/latex` for `Vector{Num}`, `Matrix{Num}` and
+    `BasicSymbolic`, and a more specific `text/latex` method here would *change* a display that
+    works, which is exactly what the benign test forbids.
+    A tuple with nothing symbolic in it, such as `(1, 2)`, gains no method and keeps Julia's
+    display.
+
+  * **`divrem` and `div` are named, not renamed.** A `poly_divrem` of our own would have
+    avoided the piracy entirely. It is not used because the point being taught is that Julia's
+    *generic* `divrem` divides polynomials exactly as it divides integers; a bespoke name would
+    state the opposite. The remainder alone is the exception: `rem` on two expressions already
+    exists in `Symbolics` (it builds an unevaluated call), so it cannot be given this meaning,
+    and [`poly_rem`](@ref) has a name of its own.
 
   * **`Plots._show` pirates an *internal*.** The leading underscore marks it as private to
-    `Plots`, so unlike the other four it carries no API stability promise at all: a patch
+    `Plots`, so unlike the other five it carries no API stability promise at all: a patch
     release could rename or remove it, and the symptom would be a plot that silently stops
     being interactive rather than an error. Measured 2026-09-11 against `Plots` v1 —
     `_best_html_output_type` maps `:plotly => :html`, and the generic
@@ -112,13 +128,14 @@ Three of these are worth a further word:
   * **`find_zero` may one day collide.** Should `Roots` add its own `Symbolics` support,
     expect a **method-overwrite warning on load**. That is not a bug to work around: the fix
     is to delete our block, because upstream's version supersedes it. The same applies to any
-    of the five if the owning package adopts the method itself.
+    of the six if the owning package adopts the method itself.
 
 ### `Nemo` is imported, and only its *name* is exported
 
 `Nemo` does two jobs here: it switches on `Symbolics.symbolic_solve` for polynomial
 equations (via Symbolics' `SymbolicsNemoExt`), and it backs `factored_poly`, `poly_factors`,
-`partial_fractions`, `numeric_roots`, `root_enclosures` and `divrem`. **So loading this
+`partial_fractions`, `numeric_roots`, `root_enclosures`, `divrem`, `div`, `poly_rem` and
+`combine_fractions`. **So loading this
 package changes what `Symbolics` itself can do** — code that fails without it will succeed
 with it.
 
@@ -217,7 +234,11 @@ include("conventional-latex.jl")
 Typeset a symbolic expression as **display math** in HTML/LaTeX frontends — Quarto,
 Jupyter, Documenter — parallel to the `text/latex` show `SymPy` has built in. Companion
 methods do the same for the vector of roots `Symbolics.symbolic_solve` returns, which
-would otherwise print its full internal type name ahead of the mathematics.
+would otherwise print its full internal type name ahead of the mathematics, and, since
+v0.16.0, for everything else symbolic a reader meets: a `Vector{Num}` (a column), a
+`Matrix{Num}` (a grid), a single unwrapped expression such as one root taken from a solution
+set, a tuple holding an expression -- `\\left( x - 3,\\ 8 \\right)` from `divrem`, with a
+symbol or boolean in it written as code -- and a [`SymlimResult`](@ref).
 
 The mathematics is typeset by [`conventional_latex`](@ref), so an expression displays the
 way a text writes it — `a x^{2} + b x + c`, not `c + b x + x^{2} a` — and the session
@@ -234,13 +255,16 @@ which Quarto renders literally. There is no effect in the plain-text REPL, which
     `show` belongs to `Base` and `Num` belongs to `Symbolics`, so these methods change how
     symbolic expressions display for every package in the session. They are benign in the
     sense set out under *Cautions* in the [`CalculusWithJuliaSquared`](@ref) module
-    documentation: neither `Num` nor the solution vector has a `text/latex` or `text/html`
-    method without them, so nothing that previously displayed changes — output that was
-    unavailable becomes available.
+    documentation: none of these types has a `text/html` method without them (and `Num` and
+    the solution vector no `text/latex` either), so nothing that previously displayed changes
+    — output that was unavailable becomes available. The containers get `text/html` only:
+    that is what a Quarto page needs, and `Symbolics` already has `text/latex` for them.
 
-    Deliberately **not** extended to `AbstractVector{<:Symbolics.Num}`: measured 2026-09-04,
-    the only published cells rendering one are the echoed return of `@variables`, so
-    widening would dress a macro's return value up as mathematics.
+    The vector and matrix methods are for exactly `Vector{Num}` and `Matrix{Num}`. A symbolic
+    array *variable* (`@variables zs[1:3]`) is an `AbstractVector{Num}` too, and it stays
+    plain, as a declaration should; so does an array of three or more dimensions. An echoed
+    `@variables x y` returns a `Vector{Num}` and does display as a column: end the cell with
+    `;` to hide it.
 """
 Base.show(io::IO, ::MIME"text/latex", x::Symbolics.Num) =
     print(io, "\\[ ", conventional_latex(x), " \\]")
@@ -251,12 +275,11 @@ Base.show(io::IO, ::MIME"text/html", x::Symbolics.Num) = _html_math(io, conventi
 # {SymReal}}` -- ahead of the roots. Typeset the solution set as display math instead, the
 # same way the scalar methods above do, which also matches how SymPy showed a solution set.
 #
-# Deliberately NOT extended to `AbstractVector{<:Symbolics.Num}`. Measured 2026-09-04: the
-# only two published cells rendering a `Vector{Num}` are the echoed return of `@variables`,
-# so widening would typeset a variable declaration -- dressing a macro's return value up as
-# mathematics. `gradient`/`divergence`/`curl` do return one and would genuinely benefit, but
-# they live in the vector-calculus groups, which are not ported and not yet in the port
-# order. Decide it there, against a real rendered gradient. See `_research/CHAPTER_MAP.md`.
+# v0.11.0 deliberately stopped at this vector, on the premise that the only published
+# `Vector{Num}` were `@variables` echoes, and wrote the trigger to revisit as a PLACE ("the
+# vector-calculus groups"). v0.13.0 added two functions returning a `Vector{Num}` and a page
+# showed `sqrt(3) / 2` for eight days, because nobody was near that place. v0.16.0 typesets
+# every container a reader meets (below). A deferral's trigger names its CONDITION.
 const _SymbolicSolutions = AbstractVector{<:Symbolics.SymbolicUtils.BasicSymbolic}
 
 # Latexify's own column layout for a vector, measured 2026-09-15, with each root typeset
@@ -281,9 +304,10 @@ _html_math(io::IO, latex::AbstractString) =
 # `divrem`, a single root taken out of a solution set and a `symlim` result all printed as
 # Julia syntax -- a published page showed `sqrt(3) / 2` for eight days. These methods add
 # `text/html` ONLY: Symbolics already owns `text/latex` for `Vector{Num}`, `Matrix{Num}`
-# and `BasicSymbolic` (SymbolicsLatexifyExt), and redefining it would overwrite that
-# method, which fails precompilation. Nothing had `text/html` before (measured), so each
-# passes the module docstring's benign test.
+# and `BasicSymbolic` (SymbolicsLatexifyExt). A `text/latex` method here would either
+# overwrite one of those, which fails precompilation, or be more specific and change a display
+# that works, which fails the benign test. Nothing had `text/html` before (measured), so each
+# of these passes it.
 # ---------------------------------------------------------------------------------
 
 # \mathtt needs these characters escaped; a route such as `:parameter_dependent` has one.

@@ -45,11 +45,14 @@ reader SEES".
 
 **A function that returns symbolic output is not done when its value is right; it is done when
 that value displays as mathematics.** On a Quarto page only a `text/html` method typesets
-(`text/latex` does not beat `text/plain`), and this package's `show` methods cover a scalar
-`Num` and the `symbolic_solve` vector — not a `Vector{Num}`, a `Tuple`, or a raw
-`BasicSymbolic`. So every new exported function gets a display test on its actual return
-value, e.g. `@test occursin("\\[", repr(MIME("text/html"), result))`, or a test pinning a
-deliberate plain-text display with the reason. Measured failure: `poly_factors` and
+(`text/latex` does not beat `text/plain`). Since v0.16.0 this package's `show` methods cover a
+`Num`, the `symbolic_solve` vector, exactly `Vector{Num}` and `Matrix{Num}`, a raw
+`BasicSymbolic`, a tuple with a symbolic value in its first 16 positions, and `SymlimResult` —
+but not, for example, a `Vector{Any}`, an array of three or more dimensions, or a new result
+type of your own. So every new exported function gets a display test on its actual return
+value, and `test/test-display.jl`'s **display contract** enforces it: every export must be
+listed there either with a real call that must typeset, or with the reason it is not symbolic
+output, and an unclassified export fails the suite. Measured failure: `poly_factors` and
 `exact_trig_values` (v0.13.0) were tested for values only; both return a `Vector{Num}`, and
 `trig_functions` published `sqrt(3) / 2` in plain text from 2026-09-08 until a review found it
 on 2026-09-16, through a full-book replay that only diffed changes.

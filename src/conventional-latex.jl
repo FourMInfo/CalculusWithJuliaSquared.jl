@@ -85,7 +85,7 @@ function _cl_check_pf_powers(o)
 end
 
 """
-    set_conventional_default(; variables, order) -> NamedTuple
+    set_conventional_default(; variables, order, factor_order, partial_fraction_powers) -> NamedTuple
 
 Change, for the rest of the session, the defaults [`conventional_latex`](@ref) uses -- and
 therefore how every symbolic expression *displays*, since a notebook or document cell has
@@ -96,6 +96,9 @@ no way to pass a keyword to its own display.
     rather than adding to it.
   * `order` -- `:descending` (highest degree first, as a polynomial is written) or
     `:ascending` (lowest first, as a Taylor polynomial or power series is written).
+  * `factor_order` -- `:roots` (linear factors by root, the default) or `:degree` (monic
+    factors first); see [`conventional_latex`](@ref).
+  * `partial_fraction_powers` -- `:ascending` (the default) or `:descending`.
 
 Options not passed keep their current value, so two calls setting one option each combine,
 as they do for `Latexify`'s own `set_default`. Returns the resulting defaults, as
@@ -140,10 +143,12 @@ end
     get_conventional_default() -> NamedTuple
 
 The defaults [`conventional_latex`](@ref) and symbolic display currently use, as
-`(variables = [...], order = ...)`. Out of the box that is
+a `NamedTuple` with fields `variables`, `order`, `factor_order` and
+`partial_fraction_powers`. Out of the box that is
 
 ```julia
-(variables = [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta], order = :descending)
+(variables = [:n, :r, :t, :u, :v, :w, :x, :y, :z, :θ, :theta], order = :descending,
+ factor_order = :roots, partial_fraction_powers = :ascending)
 ```
 
 See [`set_conventional_default`](@ref) and [`reset_conventional_default`](@ref).
@@ -1065,7 +1070,7 @@ function _cl_render_signed(t, prec::Int, ctx; negate::Bool = false)
 end
 
 """
-    conventional_latex(ex; variables, order) -> String
+    conventional_latex(ex; variables, order, factor_order, partial_fraction_powers) -> String
 
 Typeset a symbolic expression the way a mathematics text writes it.
 
@@ -1107,6 +1112,14 @@ would be recombined into the thing it was decomposed from.
 reciprocal is written as one fraction, `\\frac{1}{x^{2}}`, and a product containing one puts
 it in the denominator: `a*x^(-2)` is `\\frac{a}{x^{2}}`.
 
+A fraction never sits inside a numerator: a numerator over its own number merges that number
+into the denominator, `\\frac{2 x - 1}{25 \\left( x^{2} - x - 1 \\right)}`. A numerator whose
+every term is negative puts the minus in front, `-\\frac{x + 1}{x^{2} + 1}`; a sum over one
+number, such as `\\frac{-b - \\sqrt{b^{2} - 4 c}}{2}`, is not a numerator and keeps its signs,
+so the two roots of a quadratic still look alike. When *both* halves lead with a minus --
+judged by the highest-degree term, so `1 - x` leads with `-x` -- both are negated:
+`\\frac{x - 1}{x + 1}`, not `\\frac{1 - x}{-x - 1}`.
+
 # The order of the terms of a sum
 
 A sum is ordered by these keys, each deciding only between terms the ones before it tie:
@@ -1127,7 +1140,23 @@ Two exceptions follow convention rather than degree:
     `\\frac{-b + \\sqrt{b^{2} - 4 c}}{2}`, `\\frac{3 + \\sqrt{41}}{4}`, and the imaginary part of
     a complex root. A radical multiplied by a variable is ordered normally: `\\sqrt{2} x + 1`.
   * **A sum of two terms does not open with a minus**: `1 - x`, `1 - x^{2}`, `100 - 16 t^{2}`,
-    not `-x + 1`. With three or more terms the order above stands: `-x^{2} + 2 x - 1`.
+    not `-x + 1`, and two radicals swap too: `\\sqrt{1 + \\frac{\\sqrt{2}}{2}} - \\sqrt{1 - \\frac{\\sqrt{2}}{2}}`.
+    With three or more terms the order above stands: `-x^{2} + 2 x - 1`.
+
+## Partial fractions
+
+A sum with a term over a polynomial factor -- what [`partial_fractions`](@ref) returns -- is
+written the way the decomposition is taught: the polynomial part first, then the fractions
+grouped by factor, in the factor order of a product (below), each factor's powers rising:
+
+`x - 4 + \\frac{40}{3 \\left( x + 3 \\right)} + \\frac{2}{3 \\left( x - 3 \\right)}` and
+`-\\frac{2}{25 \\left( x - 3 \\right)} + \\frac{1}{5 \\left( x - 3 \\right)^{2}} + \\frac{2}{5 \\left( x - 3 \\right)^{3}} + \\frac{2 x - 1}{25 \\left( x^{2} - x - 1 \\right)}`.
+
+Here the factor order wins over "two terms do not open with a minus", so the template
+`\\frac{A}{x - 1} + \\frac{B}{x - 2}` reads `-\\frac{1}{x - 1} + \\frac{1}{x - 2}`. Only a factor
+that is a polynomial in one variable with rational coefficients groups a sum, so a Laurent
+polynomial, `x + 1 + \\frac{1}{x}`, and a difference quotient,
+`\\frac{1}{x + h} - \\frac{1}{x}`, keep the order above.
 
 The input form makes no difference: `1 - x` and `-x + 1` construct the same expression.
 
@@ -1157,14 +1186,26 @@ The keywords override the session defaults for one call:
     "1 + x + \\\\frac{x^{2}}{2} + \\\\frac{x^{3}}{6}"
     ```
 
-To change either for *display* -- which cannot be passed a keyword -- use
+  * `factor_order` -- how the bracketed sums of a product are ordered: `:roots` (the default)
+    puts lower degree first and linear factors by their root on the number line, as a sign
+    chart reads, `\\left( x + 3 \\right) \\left( x + 1 \\right) \\left( 2 x - 1 \\right) \\left( x - 3 \\right)`;
+    `:degree` puts monic factors before the rest within a degree,
+    `\\left( x + 3 \\right) \\left( x + 1 \\right) \\left( x - 3 \\right) \\left( 2 x - 1 \\right)`.
+
+  * `partial_fraction_powers` -- `:ascending` (the default), `\\frac{A}{x - 3} + \\frac{B}{\\left( x - 3 \\right)^{2}}`,
+    or `:descending`, highest power first, as a Laurent expansion is written.
+
+To change any of these for *display* -- which cannot be passed a keyword -- use
 [`set_conventional_default`](@ref); [`reset_conventional_default`](@ref) undoes it.
 
 # The order of the factors of a product
 
 Numbers, then constants (`\\pi`, `\\sqrt{2}`), then letters alphabetically with the variables
 after the rest, then bracketed sums, then functions: `3 h x`, `2 \\pi x`, `a E^{2}`,
-`2 x \\left( x - 1 \\right) \\left( x - 2 \\right)`, `x^{2} e^{x}`. Functions go in textbook
+`2 x \\left( x - 1 \\right) \\left( x - 2 \\right)`, `x^{2} e^{x}`. Bracketed sums go by `factor_order`
+(above): by default lower degree first, then a linear factor by its root on the number line,
+`\\left( x + 1 \\right) \\left( x - 1 \\right) \\left( x^{2} + 1 \\right)`; a factor whose root is a letter,
+`x - a`, follows the numeric ones. A power sorts by its base. Functions go in textbook
 order -- radicals and absolute values, exponentials, `sin cos tan cot sec csc`, inverse
 trigonometric, hyperbolic, logarithms, then any other alphabetically, and derivatives last --
 so `2 \\sin x \\cos x`, `e^{x} \\sin x` and `u\\left( x \\right) \\frac{d v\\left( x \\right)}{dx}`.
@@ -1184,7 +1225,8 @@ A function is typeset in `Latexify`'s own shape for it -- `\\sin\\left( x \\righ
 `\\left|x\\right|`, `\\log_{10}\\left( x \\right)` -- with its arguments typeset by all of the
 rules here: `\\cos\\left( \\frac{\\pi x}{2} \\right)`, `e^{-\\frac{x^{2}}{2}}`. A function
 `Latexify` names with a plain word is set upright as an operator, `\\operatorname{sign}`,
-using LaTeX's own command where there is one: `\\max`, `\\min`. A derivative is always in
+using LaTeX's own command where there is one: `\\max`, `\\min`. So is the placeholder for roots
+`symbolic_solve` cannot find: `\\operatorname{roots\\_of}\\left( x^{5} - x + 1, x \\right)`. A derivative is always in
 fraction form, `\\frac{d \\sin\\left( x \\right)}{dx}` or `\\frac{d^{2} f}{dx^{2}}`: the operator
 form `\\frac{d}{dx} u v` would read as the derivative of the whole product. The `d` is italic,
 as calculus texts write it, rather than `Latexify`'s upright `\\mathrm{d}`.
@@ -1192,6 +1234,10 @@ as calculus texts write it, rather than `Latexify`'s upright `\\mathrm{d}`.
 # Complex numbers
 
 The real part first, the imaginary unit last: `-1 + 2 i`, `-\\frac{1}{2} + \\frac{\\sqrt{3}}{2} i`.
+Two or more imaginary terms are written as one imaginary part, as Cardano's roots are:
+`-\\frac{u}{2} - \\frac{v}{2} + \\left( \\frac{\\sqrt{3} u}{2} - \\frac{\\sqrt{3} v}{2} \\right) i`. `Symbolics`
+computes Cardano's halves as the float `0.5`; an exact half in a complex coefficient is shown as
+the fraction it stands for, while every other float, and every real one, stays a float.
 
 # Names
 
