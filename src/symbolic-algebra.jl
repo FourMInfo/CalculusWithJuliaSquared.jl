@@ -251,7 +251,12 @@ function _rational_coeffs(ex0, var)
 
     cs = Rational{BigInt}[]
     for i in 0:n
-        c = Symbolics.value(Symbolics.coeff(ex, var^i))
+        # The constant term is the value at 0. `coeff(ex, 1)` is not it: on a single term
+        # with a coefficient it returns the whole term (`coeff(2x, 1)` is `2x`, measured
+        # Symbolics 7.41), so `2x` and `3x^2` were refused as "not rational" until v0.17.0
+        # (F5). The rebuild check below still verifies every coefficient.
+        c = Symbolics.value(i == 0 ? Symbolics.substitute(ex, Dict(var => 0); fold = Val(true)) :
+                                     Symbolics.coeff(ex, var^i))
         r = c isa Number ? _as_rational(c) : nothing
         r === nothing && throw(ArgumentError(
             "the coefficient of `$var^$i` in `$ex0` is `$c`, which is not rational. " *
@@ -307,7 +312,10 @@ Factoring is over the **rationals**, so `x^2 - 2` comes back as a single factor:
 factorisation `(x-√2)(x+√2)` exists but is not rational. `symbolic_solve` will give
 those roots.
 
-The order is sorted by degree, so repeated runs and repeated renders agree.
+The factors come in the order [`factored_poly`](@ref) shows them: the constant first, then
+lower degree first, and linear factors by their root on the number line, as a sign chart
+reads. `set_conventional_default(factor_order = :degree)` switches both to monic factors
+first. The order is fixed, so repeated runs and repeated renders agree.
 
 Throws if `ex` is not a polynomial in `var` alone, or if any coefficient is not
 rational.
@@ -319,9 +327,16 @@ julia> @variables x;
 
 julia> poly_factors(x^3 - 6x^2 + 11x - 6, x)
 3-element Vector{Num}:
- -3 + x
- -2 + x
  -1 + x
+ -2 + x
+ -3 + x
+
+julia> poly_factors(2x^4 + x^3 - 19x^2 - 9x + 9, x)     # roots -3, -1, 1/2, 3
+4-element Vector{Num}:
+   3 + x
+   1 + x
+ -1 + 2x
+  -3 + x
 
 julia> length(poly_factors(x^12 - 1, x))
 6
@@ -345,12 +360,15 @@ function poly_factors(ex, var)
     u = _from_nemo(Nemo.unit(fac), var)
     isequal(u, 1) || push!(out, u)
 
-    # Nemo's iteration order is not specified; sort so the book renders the same
-    # factorisation every time.
-    for (f, e) in sort!([(f, e) for (f, e) in fac];
-                        by = t -> (Nemo.degree(t[1]), string(t[1])))
+    # Nemo's iteration order is not specified. List the factors in the order `factored_poly`
+    # shows them (L3: lower degree first, linear factors by root; `factor_order` switches
+    # it) by sorting with the typesetter's own key, so the vector and the product cannot
+    # disagree. Until v0.17.0 this sorted by Nemo's printed text, which did (F3).
+    ctx = _cl_context()
+    fs = [(_from_nemo(f, var), e) for (f, e) in fac]
+    for (f, e) in sort!(fs; by = t -> _cl_factor_key(Symbolics.value(t[1]), ctx))
         for _ in 1:e
-            push!(out, _from_nemo(f, var))
+            push!(out, f)
         end
     end
 
@@ -388,17 +406,23 @@ factored_poly(ex, var) = prod(poly_factors(ex, var))
 # --------------------------------------------------------------------------------
 
 # A partial-fraction denominator is the whole point of the exercise, so show it
-# factored -- `(x-1)^2`, not the multiplied-out `1 - 2x + x^2` that Nemo hands back.
+# factored -- `(x-1)^2`, not the multiplied-out `1 - 2x + x^2` that Nemo hands back --
+# and with integer coefficients, `2x + 1`, as a text writes it. Nemo makes each term's
+# denominator MONIC (`y + 1//2`); `Nemo.factor` splits that into a rational unit (`1//2`)
+# times primitive integer factors (`2y + 1`). This returns the unit and the product of the
+# factors, and the caller moves the unit into the numerator. Until v0.17.0 the unit stayed
+# below, where Symbolics distributed it back into `x + \frac{1}{2}`, and a linear
+# denominator skipped the factoring altogether (F1).
 function _from_nemo_factored(f, var)
-    Nemo.degree(f) <= 1 && return _from_nemo(f, var)
-
     fac = Nemo.factor(f)
-    ex = _from_nemo(Nemo.unit(fac), var)
+    u = Nemo.unit(fac)
+    unit = u isa Nemo.QQFieldElem ? u : Nemo.coeff(u, 0)
+    ex = Symbolics.Num(1)
     for (g, e) in sort!([(g, e) for (g, e) in fac];
                         by = t -> (Nemo.degree(t[1]), string(t[1])))
         ex *= _from_nemo(g, var)^e
     end
-    ex
+    unit, ex
 end
 
 function _numerator_denominator(t)
@@ -415,13 +439,13 @@ end
 Decompose the rational expression `ex` into partial fractions over the rationals,
 returning the decomposition as a symbolic sum (`SymPy` spells this `apart`).
 
-`ex` must be a single quotient of polynomials in `var` -- the shape `p/q` -- or a
-polynomial, which is returned unchanged. A sum of separate fractions is not
-recognised; put it over a common denominator first with `simplify` or
-`simplify_fractions`.
+`ex` is a rational function of `var`: a quotient `p/q` of polynomials, a sum of such
+terms (`x + 1/(x + 1)`, combined first with [`combine_fractions`](@ref)), or a polynomial,
+which is returned unchanged. Coefficients must be rational.
 
 The polynomial part of an improper fraction is included in the sum, and repeated
-factors in the denominator produce the expected higher-power terms.
+factors in the denominator produce the expected higher-power terms. Each denominator is
+factored over the integers, as a text writes it: `2x + 1`, never `x + \\frac{1}{2}`.
 
 ## Examples
 
@@ -429,18 +453,35 @@ factors in the denominator produce the expected higher-power terms.
 julia> @variables x;
 
 julia> partial_fractions(1/((x-1)*(x-2)), x)
--1 / (-1 + x) + 1 / (-2 + x)
+1 / (-2 + x) + -1 / (-1 + x)
 
 julia> partial_fractions((x+3)/((x-1)^2*(x+2)), x)
 (-1//9) / (-1 + x) + (1//9) / (2 + x) + (4//3) / ((-1 + x)^2)
 
 julia> partial_fractions(x^3/((x-1)*(x-2)), x)      # improper: polynomial part included
 3 + x + -1 / (-1 + x) + 8 / (-2 + x)
+
+julia> partial_fractions(1/((2x+1)*(3x-1)), x)       # integer factors below
+(-2//5) / (1 + 2x) + (3//5) / (-1 + 3x)
+
+julia> partial_fractions(x + 1/(2x + 1), x)          # a sum is combined first
+x + 1 / (1 + 2x)
 ```
+
+On a page each term is typeset as a text writes it, e.g.
+``-\\frac{2}{5(2x + 1)} + \\frac{3}{5(3x - 1)}``.
 
 See also [`factored_poly`](@ref), [`exact_trig_values`](@ref).
 """
 function partial_fractions(ex, var)
+    # A sum means one rational function to a reader -- `x + 1/(x + 1)` -- so put it over one
+    # denominator first. `combine_fractions` refuses floats itself; anything not rational in
+    # `var` alone is refused below, as a single quotient always was. Until v0.17.0 a sum
+    # failed inside Symbolics' `coeff` (F2).
+    t = Symbolics.value(ex)
+    if _SU.iscall(t) && _SU.operation(t) === (+)
+        ex = combine_fractions(ex)
+    end
     num, den = _numerator_denominator(Symbolics.value(ex))
 
     R, y = _nemo_ring()
@@ -456,8 +497,8 @@ function partial_fractions(ex, var)
     out = Symbolics.Num(0)
     for t in terms
         iszero(t) && continue
-        n = _from_nemo(Nemo.numerator(t), var)
-        d = _from_nemo_factored(Nemo.denominator(t), var)
+        unit, d = _from_nemo_factored(Nemo.denominator(t), var)
+        n = _from_nemo(Nemo.numerator(t) * inv(unit), var)
         out += isequal(d, 1) ? n : n / d
     end
     out

@@ -617,3 +617,53 @@ end
         @test !occursin("\\mathtt", out)
     end
 end
+
+@testset "factor order and minus placement (v0.17.0)" begin
+
+    # Decisions of 2026-09-24 (F3, and F4 A on the "Minus Sign Placement" page). Every input is
+    # what a reader gets from the function they call: v0.16.0's tests hand-built their inputs,
+    # and each such input happened to have the one stored shape its rule handled.
+    @variables x a b c
+    cl = conventional_latex
+    N = Symbolics.Num
+    shown(v) = cl.(v)
+
+    # ---- F3: `poly_factors` lists its factors in the order `factored_poly` shows them -------
+    quartic = 2x^4 + x^3 - 19x^2 - 9x + 9                   # polynomial_roots.qmd
+    @test shown(poly_factors(quartic, x)) == ["x + 3", "x + 1", "2 x - 1", "x - 3"]
+    @test cl(factored_poly(quartic, x)) ==
+          "\\left( x + 3 \\right) \\left( x + 1 \\right) \\left( 2 x - 1 \\right) \\left( x - 3 \\right)"
+    @test shown(poly_factors(expand((x-1)^2 * (x-2)^2), x)) == ["x - 1", "x - 1", "x - 2", "x - 2"]
+    @test shown(poly_factors(expand((x-1)*(x-2)*(x^5 - x - 1)), x)) == ["x - 1", "x - 2", "x^{5} - x - 1"]
+    @test shown(poly_factors(2x^2 - 2, x)) == ["2", "x + 1", "x - 1"]          # the constant leads
+    # it follows the session's factor order too, so the column and the product always agree
+    @test _with_default(() -> shown(poly_factors(quartic, x)); factor_order = :degree) ==
+          ["x + 3", "x + 1", "x - 3", "2 x - 1"]
+    # the product of the list is still the polynomial
+    @test isequal(expand(prod(poly_factors(quartic, x)) - quartic), 0)
+
+    # ---- F4 A: the minus goes in front only over a variable denominator with no radical ------
+    # judged on the expression, never on how Symbolics happened to store it
+    # (1)-(2) the general quadratic formula (polynomial_roots.qmd): a matching pair
+    @test Set(shown(N.(symbolic_solve(a*x^2 + b*x + c ~ 0, x)))) ==
+          Set(["\\frac{-b + \\sqrt{b^{2} - 4 a c}}{2 a}", "\\frac{-b - \\sqrt{b^{2} - 4 a c}}{2 a}"])
+    # (3)-(4) one number, one display, however it was built
+    solved = N(symbolic_solve(2x^2 + 2x - 1 ~ 0, x)[2])
+    typed = (-1 - sqrt(N(3)))/2
+    @test cl(solved) == cl(typed) == "\\frac{-1 - \\sqrt{3}}{2}"
+    @test Set(shown(N.(symbolic_solve(x^2 + x - 1 ~ 0, x)))) ==
+          Set(["\\frac{-1 + \\sqrt{5}}{2}", "\\frac{-1 - \\sqrt{5}}{2}"])
+    # (5) a sum over a number keeps its signs, however it was built
+    @test cl((-x - 1)/2) == cl(-(1//2)*x - 1//2) == "\\frac{-x - 1}{2}"
+    # a radical keeps the minus inside even over a variable denominator
+    @test cl((-1 - sqrt(x))/(x + 1)) == "\\frac{-1 - \\sqrt{x}}{x + 1}"
+    # negative space -- (6) L2's partial fractions, and a plain all-negative numerator over a
+    # variable denominator, keep the minus in front
+    @test cl(partial_fractions(1/((x^2+1)*(x-1)), x)) ==
+          "\\frac{1}{2 \\left( x - 1 \\right)} - \\frac{x + 1}{2 \\left( x^{2} + 1 \\right)}"
+    @test cl((-x - 1)/(x^2 + 1)) == "-\\frac{x + 1}{x^{2} + 1}"
+    @test cl(combine_fractions((1/x + 1)/(1/x - 1))) == "-\\frac{x + 1}{x - 1}"
+    # (7) two radicals over a number, as v0.16.0 (L4)
+    @test "\\frac{-\\sqrt{1 + \\frac{\\sqrt{2}}{2}} - \\sqrt{1 - \\frac{\\sqrt{2}}{2}}}{2}" in
+          Set(shown(N.(symbolic_solve(8x^4 - 8x^2 + 1 ~ 0, x))))
+end

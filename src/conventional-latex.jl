@@ -179,6 +179,17 @@ struct _CLContext
     pf_descending::Bool        # L6: `partial_fraction_powers = :descending`
 end
 
+function _cl_context(; variables = nothing, order = nothing, factor_order = nothing,
+                     partial_fraction_powers = nothing)
+    d = get_conventional_default()
+    _CLContext(Set{Symbol}(variables === nothing ? d.variables : _cl_varnames(variables)),
+               (order === nothing ? d.order : _cl_check_order(order)) === :ascending,
+               (factor_order === nothing ? d.factor_order :
+                   _cl_check_factor_order(factor_order)) === :degree,
+               (partial_fraction_powers === nothing ? d.partial_fraction_powers :
+                   _cl_check_pf_powers(partial_fraction_powers)) === :descending)
+end
+
 # ---------------------------------------------------------------------------------
 # leaves
 # ---------------------------------------------------------------------------------
@@ -395,6 +406,20 @@ function _cl_hasradical(t)
     op, args = _SU.operation(t), _SU.arguments(t)
     op in (+, *, /, ^, getindex) || return true
     any(_cl_hasradical, args)
+end
+
+# Does this contain a root -- `sqrt`, `cbrt`, Symbolics' `ssqrt`/`scbrt`, or a power with a
+# fractional exponent -- anywhere inside? Narrower than `_cl_hasradical`, which counts every
+# non-arithmetic head; F4 A's rule is about roots only.
+function _cl_has_root(t)
+    _SU.iscall(t) || return false
+    op, args = _SU.operation(t), _SU.arguments(t)
+    op in (sqrt, cbrt, Symbolics.ssqrt, Symbolics.scbrt) && return true
+    if op === (^)
+        e = _cl_number(args[2])
+        e !== nothing && !isinteger(e) && return true
+    end
+    any(_cl_has_root, args)
 end
 
 # Degree of the parts of a term lying OUTSIDE any radical. `sqrt(2)*x` has outer degree
@@ -750,9 +775,15 @@ function _cl_parts(t, prec::Int, ctx)
         # term, so `1 - x` leads with `-x` -- negate both: `\frac{x - 1}{x + 1}`, not
         # `\frac{1 - x}{-x - 1}`. Only the string is negated; the tree is left alone.
         flip = _cl_leads_negative(nu, ctx) && _cl_leads_negative(de, ctx)
-        # L2: a numerator whose every term is negative puts its minus in front.
+        # L2, as decided in F4 A (v0.17.0): a numerator whose every term is negative puts its
+        # minus in front -- but only over a denominator containing a variable, and only when
+        # the numerator has no root in it. So `-\frac{x + 1}{x^{2} + 1}`, while a sum over a
+        # number and a root formula keep their signs: `\frac{-x - 1}{2}`,
+        # `\frac{-b - \sqrt{b^{2} - 4 a c}}{2 a}`. Judged on the expression, not on whether
+        # Symbolics stored it as a quotient: until v0.17.0 one number showed two ways.
+        front = !isempty(Symbolics.get_variables(de)) && !_cl_has_root(nu)
         nneg, nnum, nden = _cl_is_sum(nu) ?
-            _cl_sum_parts(nu, _PREC_SUM, ctx; negate = flip, front_minus = true) :
+            _cl_sum_parts(nu, _PREC_SUM, ctx; negate = flip, front_minus = front) :
             _cl_flipped(_cl_parts(nu, _PREC_SUM, ctx), flip)
         isempty(nden) && return (nneg, nnum, _cl_render_signed(de, _PREC_SUM, ctx; negate = flip))
         # L1: a numerator that is itself over a number -- partial fractions store
@@ -1120,9 +1151,12 @@ it in the denominator: `a*x^(-2)` is `\\frac{a}{x^{2}}`.
 
 A fraction never sits inside a numerator: a numerator over its own number merges that number
 into the denominator, `\\frac{2 x - 1}{25 \\left( x^{2} - x - 1 \\right)}`. A numerator whose
-every term is negative puts the minus in front, `-\\frac{x + 1}{x^{2} + 1}`; a sum over one
-number, such as `\\frac{-b - \\sqrt{b^{2} - 4 c}}{2}`, is not a numerator and keeps its signs,
-so the two roots of a quadratic still look alike. When *both* halves lead with a minus --
+every term is negative puts the minus in front when the denominator contains a variable and
+the numerator has no root in it, `-\\frac{x + 1}{x^{2} + 1}`. Over a number, or with a root,
+the signs stay inside -- `\\frac{-x - 1}{2}`, `\\frac{-1 - \\sqrt{3}}{2}`,
+`\\frac{-b - \\sqrt{b^{2} - 4 a c}}{2 a}` -- so the two roots of any quadratic look alike. The
+rule is judged on the expression, not on how it was built: the same number reads the same
+whether it came from `symbolic_solve` or was typed as a quotient. When *both* halves lead with a minus --
 judged by the highest-degree term, so `1 - x` leads with `-x` -- both are negated:
 `\\frac{x - 1}{x + 1}`, not `\\frac{1 - x}{-x - 1}`.
 
@@ -1275,13 +1309,7 @@ failing. A string is returned as it is.
 """
 function conventional_latex(ex; variables = nothing, order = nothing, factor_order = nothing,
                             partial_fraction_powers = nothing)
-    d = get_conventional_default()
-    ctx = _CLContext(Set{Symbol}(variables === nothing ? d.variables : _cl_varnames(variables)),
-                     (order === nothing ? d.order : _cl_check_order(order)) === :ascending,
-                     (factor_order === nothing ? d.factor_order :
-                         _cl_check_factor_order(factor_order)) === :degree,
-                     (partial_fraction_powers === nothing ? d.partial_fraction_powers :
-                         _cl_check_pf_powers(partial_fraction_powers)) === :descending)
+    ctx = _cl_context(; variables, order, factor_order, partial_fraction_powers)
     t = Symbolics.value(ex)
     neg, body = _cl_signed(t, _PREC_SUM, ctx)
     neg ? "-" * body : body
