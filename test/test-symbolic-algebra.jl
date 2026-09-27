@@ -272,3 +272,96 @@ end
 
     @test :combine_fractions in names(CalculusWithJuliaSquared)
 end
+
+@testset "partial_fractions: non-monic denominators and sums (v0.17.0)" begin
+
+    # Every input below is what a reader passes to `partial_fractions` itself -- the chapter's
+    # own where one exists. v0.16.0's tests used monic denominators only, and so missed F1.
+    @variables x y
+    cl = conventional_latex
+    no_fraction_in_a_factor(s) = !occursin(r"x [+-] \\frac", s)
+
+    # ---- F1: a non-monic factor is shown with integer coefficients --------------------------
+    # Nemo factors over the rationals into MONIC factors times a unit, so v0.16.0 showed
+    # `125 \frac{(5x^4 + ...)}{5}` and `x + \frac{1}{2}`. A text writes `2x + 1`.
+    cases = [
+        # rational_functions.qmd, the `# or partial_fractions(p, x)` comment beside `divrem`
+        ((x^5 - 2x^4 + 3x^3 - 4x^2 + 5) / (5x^4 + 4x^3 + 3x^2 + 2x + 1),
+            "\\frac{x}{5} - \\frac{14}{25} + \\frac{116 x^{3} - 68 x^{2} + 23 x + 139}" *
+            "{25 \\left( 5 x^{4} + 4 x^{3} + 3 x^{2} + 2 x + 1 \\right)}"),
+        (1/((2x + 1)*(3x - 1)),
+            "-\\frac{2}{5 \\left( 2 x + 1 \\right)} + \\frac{3}{5 \\left( 3 x - 1 \\right)}"),
+        # a repeated non-monic factor; v0.16.0 showed its two terms in two different forms
+        (x/(2x - 1)^2,
+            "\\frac{1}{2 \\left( 2 x - 1 \\right)} + \\frac{1}{2 \\left( 2 x - 1 \\right)^{2}}"),
+        (1/(2x + 1)^2, "\\frac{1}{\\left( 2 x + 1 \\right)^{2}}"),
+        (x^3/(2x^2 + 1), "\\frac{x}{2} - \\frac{x}{2 \\left( 2 x^{2} + 1 \\right)}"),   # was right
+    ]
+    for (ex, shown) in cases
+        d = partial_fractions(ex, x)
+        @test cl(d) == shown
+        @test no_fraction_in_a_factor(cl(d))
+        @test !occursin("\\frac{\\frac", cl(d))
+        @test _equal_at_rationals(ex, d, [x])
+    end
+    # negative space: a monic decomposition is exactly as v0.16.0 showed it
+    @test cl(partial_fractions((x^3 - 4x^2 + 5x - 2)/(x^2 - 9), x)) ==
+          "x - 4 + \\frac{40}{3 \\left( x + 3 \\right)} + \\frac{2}{3 \\left( x - 3 \\right)}"
+    @test cl(partial_fractions(1/((x-1)*(x-2)), x)) == "-\\frac{1}{x - 1} + \\frac{1}{x - 2}"
+
+    # ---- F2: a sum is combined first, as a reader means it ----------------------------------
+    # v0.16.0 failed with Symbolics' "coeff on fractions is not yet implemented".
+    h = (x-1)^2 * (x-2) / ((x+3)*(x-3))
+    sums = [
+        # rational_functions.qmd L153: the decomposition minus its polynomial part
+        (partial_fractions(h, x) - (x - 4), "\\frac{40}{3 \\left( x + 3 \\right)} + \\frac{2}{3 \\left( x - 3 \\right)}"),
+        # polynomial_roots.qmd: `apart` of the division, written as the sum it produces
+        (x^3 + 2x^2 + 6x + 12 + 29/(x - 2), "x^{3} + 2 x^{2} + 6 x + 12 + \\frac{29}{x - 2}"),
+        (x + 1/(x + 1), "x + \\frac{1}{x + 1}"),
+        (x + 1/(2x + 1), "x + \\frac{1}{2 x + 1}"),
+        (1/(x - 1) + 1/(x + 1), "\\frac{1}{x + 1} + \\frac{1}{x - 1}"),
+        (1/(x - 1) - 1/(x + 1) - 2/(x^2 - 1), "0"),                    # cancels completely
+    ]
+    for (ex, shown) in sums
+        # a refusal must show up as a failed test naming the error, not abort the testset
+        d = try
+            partial_fractions(ex, x)
+        catch err
+            @test err === nothing
+            continue
+        end
+        @test cl(d) == shown
+        @test _equal_at_rationals(ex, d, [x])
+        @test occursin("\\[", repr(MIME("text/html"), d))              # it reaches the page typeset
+    end
+    # negative space: combining first must not widen what is accepted
+    @test isequal(partial_fractions(x^2 + 1, x), x^2 + 1)              # a polynomial, unchanged
+    @test_throws ArgumentError partial_fractions(1/(x - 1) + 1/(y - 2), x)   # two variables
+    @test_throws ArgumentError partial_fractions(sin(x) + 1/(x - 1), x)      # not rational in x
+    @test_throws ArgumentError partial_fractions(0.5x + 1/x, x)              # a float
+end
+
+@testset "one-term polynomials with a coefficient (v0.17.0)" begin
+
+    # F5, found while making F2 green: Symbolics' `coeff(2x, 1)` returns `2x`, not 0, so every
+    # function reading coefficients refused `2x`, `3x^2`, `2x^3` as "not rational". The suite
+    # only ever had sums, or a lone `x`. Each input is a call a reader makes.
+    @variables x y
+    cl = conventional_latex
+
+    @test cl.(poly_factors(2x, x)) == ["2", "x"]
+    @test cl.(poly_factors(3x^2, x)) == ["3", "x", "x"]
+    @test cl(factored_poly(3x^2, x)) == "3 x^{2}"
+    @test all(isequal.(divrem(2x, x - 1), (Symbolics.Num(2), Symbolics.Num(2))))
+    @test cl.(divrem(x^2 + 1, 2x)) == ("\\frac{x}{2}", "1")
+    @test isequal(poly_rem(x^2 + 1, 2x), Symbolics.Num(1))
+    @test cl(partial_fractions(3/(2x), x)) == "\\frac{3}{2 x}"
+    @test cl(partial_fractions(1/(x - 1) + 1/(x + 1), x)) == "\\frac{1}{x + 1} + \\frac{1}{x - 1}"   # F2's
+    @test numeric_roots(2x^3, x) == zeros(ComplexF64, 3)
+    @test all(iszero, Float64.(root_enclosures(2x^3, x)))
+    # negative space: what was refused for a real reason still is
+    @test_throws ArgumentError poly_factors(2x + y, x)            # two variables
+    @test_throws ArgumentError poly_factors(2.5x, x)              # a float coefficient
+    @test_throws ArgumentError poly_factors(2 * sin(x), x)        # not a polynomial
+    @test_throws ArgumentError poly_factors(2/x, x)               # not a polynomial
+end
