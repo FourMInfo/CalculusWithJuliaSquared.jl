@@ -237,8 +237,19 @@ end
     @test cl(Symbolics.Num(2)^x) == "2^{x}"
     @test cl((-2)^x)             == "\\left( -2 \\right)^{x}"
     @test cl(PI^x)               == "\\pi^{x}"
-    @test cl((x^2)^(1//3))       == "x^{\\frac{2}{3}}"
     @test cl((2.5)^x)            == "2.5^{x}"
+
+    # A power of a power with a rational exponent. SymbolicUtils up to 4.46 folded
+    # `(x^2)^(1//3)` into `x^(2//3)` before it reached the typesetter; 4.48 keeps the nested
+    # tree, which then takes the bracketed base like `(x^2)^y` above. Assert on the tree the
+    # installed version stores, so the test follows Symbolics instead of pinning one version.
+    let t = Symbolics.value((x^2)^(1//3))
+        if Symbolics.iscall(t) && Symbolics.iscall(Symbolics.arguments(t)[1])
+            @test cl((x^2)^(1//3)) == "\\left( x^{2} \\right)^{\\frac{1}{3}}"
+        else
+            @test cl((x^2)^(1//3)) == "x^{\\frac{2}{3}}"
+        end
+    end
 
     # ---- 2. negative powers ----------------------------------------------------------
     # Symbolics STORES `x^(-2)` as `(1/x)^2` -- the same tree -- so this is how a negative
